@@ -43,28 +43,26 @@ function findColumn(row: Cell[], names: string[]) {
 }
 
 async function extractPdfRows(file: File) {
-  // PDFs de orçamento têm uma estrutura diferente das planilhas:
-  // Quantidade + Valor unitário + Subtotal + Código/Descrição.
-  // Para a separação, somente Quantidade + Código + Descrição são aproveitados.
+  // Orçamentos deste modelo usam colunas:
+  // Qt. | Produto/Serviço | Detalhe do item | Valor unitário | Subtotal.
+  // Para a separação usamos somente Qt. + Código + Descrição.
   const pdfjs = await import("pdfjs-dist/legacy/build/pdf.js");
 
-  // No GitHub Pages, o PDF.js não consegue localizar automaticamente o worker
-  // gerado pelo bundler. Usamos o worker oficial da mesma versão via CDN.
   pdfjs.GlobalWorkerOptions.workerSrc =
     "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
 
   const buffer = await file.arrayBuffer();
-  const pdf = await pdfjs.getDocument({
-    data: new Uint8Array(buffer)
-  }).promise;
+  const pdf = await pdfjs.getDocument({ data: new Uint8Array(buffer) }).promise;
 
-  const lines: string[] = [];
+  type PdfTextItem = { str: string; transform: number[] };
+  type VisualItem = { text: string; x: number; y: number };
+  type VisualLine = { y: number; items: VisualItem[] };
+
+  const visualLines: VisualLine[] = [];
 
   for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber++) {
     const page = await pdf.getPage(pageNumber);
     const content = await page.getTextContent();
-
-    type PdfTextItem = { str: string; transform: number[] };
 
     const items = (content.items as unknown[])
       .filter((item): item is PdfTextItem => {
@@ -77,92 +75,139 @@ async function extractPdfRows(file: File) {
           candidate.transform.every((value) => typeof value === "number")
         );
       })
-      .map((item: PdfTextItem) => ({
+      .map((item) => ({
         text: item.str.trim(),
         x: item.transform[4],
         y: item.transform[5]
       }))
-      .filter((item: { text: string }) => item.text);
+      .filter((item) => item.text);
 
     items.sort((a, b) => {
       if (Math.abs(a.y - b.y) > 2) return b.y - a.y;
       return a.x - b.x;
     });
 
-    const pageLines: { y: number; text: string }[] = [];
     for (const item of items) {
-      const line = pageLines.find((current) => Math.abs(current.y - item.y) <= 2);
+      const line = visualLines.find(
+        (current) => Math.abs(current.y - item.y) <= 2
+      );
+
       if (line) {
-        line.text += (line.text.endsWith(" ") ? "" : " ") + item.text;
+        line.items.push(item);
       } else {
-        pageLines.push({ y: item.y, text: item.text });
+        visualLines.push({ y: item.y, items: [item] });
       }
     }
-
-    pageLines
-      .sort((a, b) => b.y - a.y)
-      .forEach((line) => lines.push(line.text.replace(/\s+/g, " ").trim()));
-
-    lines.push("__PAGE_BREAK__");
   }
+
+  visualLines.forEach((line) => line.items.sort((a, b) => a.x - b.x));
 
   const rows: SheetMatrix = [];
   let current: { q: number; code: string; description: string } | null = null;
 
-  const ignored = (line: string) =>
-    !line ||
-    line === "__PAGE_BREAK__" ||
-    /produto\/servico|produto\/servi[cç]o|detalhe do item|valor unit[aá]rio|subtotal/i.test(line) ||
-    /continua na pr[oó]xima p[aá]gina|p[aá]gina \d+ de \d+/i.test(line);
-
-  const addCurrent = () => {
+  const finishCurrent = () => {
     if (!current) return;
-    const description = current.description.replace(/\s+/g, " ").trim();
+
+    const description = current.description
+      .replace(/\\s+/g, " ")
+      .replace(/^[ -]+|[ -]+$/g, "")
+      .trim();
+
     if (current.q > 0 && description) {
-      rows.push([current.q, current.code || `ITEM-${String(rows.length + 1).padStart(3, "0")}`, description]);
+      rows.push([
+        current.q,
+        current.code || `ITEM-${String(rows.length + 1).padStart(3, "0")}`,
+        description
+      ]);
     }
+
     current = null;
   };
 
-  for (const rawLine of lines) {
-    const line = rawLine.trim();
+  const isMoney = (text: string) =>
+    /^-?\\d{1,3}(?:[.]\\d{3})*,\\d{2}$/.test(text) ||
+    /^-?\\d+,\\d{2}$/.test(text);
 
-    if (ignored(line)) continue;
+  const isPageOrFooter = (line: string) =>
+    /produto\\/servi[cç]o|detalhe do item|valor unit[aá]rio|subtotal/i.test(line) ||
+    /continua na pr[oó]xima p[aá]gina|p[aá]gina\\s+\\d+\\s+de\\s+\\d+/i.test(line) ||
+    /^valor l[ií]quido|^total(?:\\s|$)|^condi[cç][aã]o de pagamento|^forma de pagamento|^n[ºo]\\s+vencimento/i.test(line);
 
-    // Formato comum dos orçamentos: 4 48,90 195,60BP MOD 27 - VASCO - BOLSA
-    const itemMatch = line.match(/^(\d+)\s+[\d.,]+\s+[\d.,]+\s*(.+)$/);
-    if (itemMatch) {
-      addCurrent();
+  for (const line of visualLines) {
+    const parts = line.items.map((item) => item.text).filter(Boolean);
+    const textLine = parts.join(" ").replace(/\\s+/g, " ").trim();
 
-      const q = Number(itemMatch[1]);
-      const rest = itemMatch[2].trim();
-      const codeMatch = rest.match(/^([A-Za-z0-9]+(?:\s+MOD\s+\d+)?)\s*-\s*(.+)$/i);
+    if (!textLine || isPageOrFooter(textLine)) continue;
+
+    // A linha de produto começa com a quantidade na primeira coluna.
+    // O restante pode conter duas colunas de texto e, no final, dois valores.
+    const first = parts[0];
+    const qMatch = first.match(/^(\\d+)$/);
+
+    if (qMatch) {
+      const q = Number(qMatch[1]);
 
       if (Number.isFinite(q) && q > 0) {
+        finishCurrent();
+
+        const textParts = parts
+          .slice(1)
+          .filter((part) => !isMoney(part));
+
+        // Neste modelo a primeira coluna textual é "Produto/Serviço",
+        // por exemplo: "CTF MOD 27 - VASCO - CARTEIRA".
+        // O código é a parte até " - VASCO"; a descrição vem do
+        // "Detalhe do item" e, se necessário, do restante da linha.
+        const productService = textParts[0] || "";
+        const detailParts = textParts.slice(1);
+
+        const codeMatch = productService.match(
+          /^([A-Za-z0-9]+(?:\\s+MOD\\s+\\d+)?(?:\\s*-\\s*[A-Za-z0-9]+)?)\\s*-\\s*(.+)$/i
+        );
+
+        let code = "";
+        let shortDescription = productService;
+
+        if (codeMatch) {
+          code = codeMatch[1].trim();
+          shortDescription = codeMatch[2].trim();
+        }
+
+        const detail = detailParts.join(" ").trim();
+
+        // Preferimos o detalhe, pois é a descrição completa do item.
+        // Se o PDF não tiver detalhe separado, usamos o texto da coluna
+        // Produto/Serviço depois do código.
+        const description = detail || shortDescription;
+
         current = {
           q,
-          code: codeMatch ? codeMatch[1].trim() : "",
-          description: codeMatch ? codeMatch[2].trim() : rest
+          code,
+          description
         };
+        continue;
       }
-      continue;
     }
 
-    if (/^valor l[ií]quido|^total(?:\s|$)|^condi[cç][aã]o de pagamento|^forma de pagamento|^n[ºo]\s+vencimento/i.test(line)) {
-      addCurrent();
-      continue;
-    }
-
-    // As descrições podem continuar na linha seguinte.
+    // Linhas seguintes sem quantidade são continuação da descrição.
     if (current) {
-      current.description += ` ${line}`;
+      const continuation = parts
+        .filter((part) => !isMoney(part))
+        .join(" ")
+        .trim();
+
+      if (continuation && !isPageOrFooter(continuation)) {
+        current.description += ` ${continuation}`;
+      }
     }
   }
 
-  addCurrent();
+  finishCurrent();
 
   if (!rows.length) {
-    throw new Error("Não encontrei produtos no orçamento PDF. O PDF precisa conter quantidade e descrição dos produtos.");
+    throw new Error(
+      "Não encontrei produtos no orçamento PDF. O PDF precisa conter quantidade, produto/serviço e descrição."
+    );
   }
 
   return rows;
