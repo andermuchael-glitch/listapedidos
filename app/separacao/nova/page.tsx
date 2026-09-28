@@ -168,6 +168,23 @@ export default function NovaSeparacaoPage() {
       separado: 0
     }));
 
+    // Arquiva automaticamente a separação anterior antes de abrir uma nova.
+    const previousRaw = localStorage.getItem("listapedidos:separacao-atual");
+    if (previousRaw) {
+      try {
+        const previous = JSON.parse(previousRaw);
+        const history = JSON.parse(localStorage.getItem("listapedidos:historico") || "[]");
+        history.unshift({
+          ...previous,
+          status: previous.status || "em_andamento",
+          archivedAt: new Date().toISOString()
+        });
+        localStorage.setItem("listapedidos:historico", JSON.stringify(history.slice(0, 100)));
+      } catch {
+        // Não impede a criação da nova separação.
+      }
+    }
+
     localStorage.setItem(
       "listapedidos:separacao-atual",
       JSON.stringify({
