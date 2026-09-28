@@ -42,8 +42,8 @@ function findColumn(row: Cell[], names: string[]) {
 }
 
 function locateProductTable(matrix: SheetMatrix) {
-  // Nesta planilha existem totais/resumos acima da área real do pedido.
-  // O ponto de partida correto é o bloco "LANÇAMENTO DE PEDIDO".
+  // A separação usa somente: QUANTIDADE, CÓDIGO e DESCRIÇÃO.
+  // Valores, subtotais, totais e demais informações comerciais são ignorados.
   let launchRow = -1;
 
   for (let r = 0; r < matrix.length; r++) {
@@ -59,7 +59,7 @@ function locateProductTable(matrix: SheetMatrix) {
 
   for (let r = firstRow; r < matrix.length; r++) {
     const row = matrix[r] ?? [];
-    const quantityCol = findColumn(row, ["Quantidade", "Qtd", "Qtde"]);
+    const quantityCol = findColumn(row, ["Quantidade", "Quant", "Qtd", "Qtde"]);
     const codeCol = findColumn(row, ["Código", "Codigo", "Cod", "SKU", "Referência", "Referencia"]);
     const productCol = findColumn(row, [
       "Descrição do produto",
@@ -70,14 +70,17 @@ function locateProductTable(matrix: SheetMatrix) {
       "Produto/Descrição"
     ]);
 
-    if (quantityCol >= 0 && codeCol >= 0 && productCol >= 0) {
+    // Código é opcional: algumas planilhas possuem apenas Quant + Descrição.
+    if (quantityCol >= 0 && productCol >= 0) {
       const rows: SheetMatrix = [];
+      let itemNumber = 1;
 
       for (let i = r + 1; i < matrix.length; i++) {
         const line = matrix[i] ?? [];
         const q = numberValue(line[quantityCol]);
-        const code = cell(line[codeCol]);
+        const code = codeCol >= 0 ? cell(line[codeCol]) : "";
         const product = cell(line[productCol]);
+        const lineText = norm(line.map(cell).join(" "));
 
         // Linhas vazias encerram a tabela depois que já encontramos itens.
         if (!q && !code && !product) {
@@ -85,9 +88,15 @@ function locateProductTable(matrix: SheetMatrix) {
           continue;
         }
 
-        // Só entram linhas que tenham os três campos da tabela de lançamento.
-        if (q > 0 && code && product) {
-          rows.push([q, code, product]);
+        // Totais/subtotais nunca entram na separação.
+        const isTotal = /(^|\s)(total|subtotal|sub-total|totais)(\s|$)/i.test(lineText);
+        if (isTotal) continue;
+
+        // Só entram produtos com quantidade e descrição.
+        if (q > 0 && product) {
+          const finalCode = code || `ITEM-${String(itemNumber).padStart(3, "0")}`;
+          rows.push([q, finalCode, product]);
+          itemNumber++;
         }
       }
 
@@ -137,7 +146,7 @@ export default function NovaSeparacaoPage() {
       }
 
       if (!found) {
-        throw new Error("Não encontrei uma tabela com Quantidade, Código e Produto/Descrição do produto.");
+        throw new Error("Não encontrei uma tabela com Quantidade e Descrição do produto.");
       }
 
       setPreview({
@@ -219,7 +228,7 @@ export default function NovaSeparacaoPage() {
         <h2>Selecione a planilha</h2>
         <p className="muted">
           A planilha pode ter totais e resumos antes dos produtos. O ListaPedidos ignora tudo acima de <strong>LANÇAMENTO DE PEDIDO</strong> e usa somente a tabela abaixo dela, que contém
-          <strong> Quantidade, Código e Produto/Descrição do produto</strong> e usar somente essa parte.
+          <strong> Quantidade, Código e Descrição</strong>. Valores e totais são ignorados.
         </p>
 
         <label className="upload-button">
@@ -249,8 +258,8 @@ export default function NovaSeparacaoPage() {
           <div className="notice">
             <strong>Somente esta tabela será usada</strong>
             <span>
-              Quantidade → coluna {preview.quantityCol + 1} · Código → coluna {preview.codeCol + 1} ·
-              Produto/Descrição → coluna {preview.productCol + 1}
+              Quantidade → coluna {preview.quantityCol + 1} · Código → {preview.codeCol >= 0 ? `coluna ${preview.codeCol + 1}` : "gerado automaticamente"} ·
+              Descrição → coluna {preview.productCol + 1}
             </span>
           </div>
 
@@ -274,7 +283,7 @@ export default function NovaSeparacaoPage() {
           <div className="notice">
             <strong>Pronto para importar</strong>
             <span>
-              A prévia mostra os primeiros {preview.rows.length} itens, mas a separação usará todos os {preview.allRows.length} itens encontrados nessa tabela.
+              A prévia mostra os primeiros {preview.rows.length} itens, mas a separação usará todos os {preview.allRows.length} produtos. Valores, subtotais e totais da planilha não são importados.
             </span>
           </div>
 
