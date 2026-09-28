@@ -5,7 +5,7 @@ import { useEffect, useMemo, useState } from "react";
 import { ArrowLeft, Check, Minus, Plus, Search } from "lucide-react";
 
 type Item = { id: string; codigo: string; descricao: string; quantidade: number; separado: number };
-type Separation = { id: string; fileName: string; numero: string; cliente: string; items: Item[]; createdAt: string };
+type Separation = { id: string; fileName: string; numero: string; cliente: string; items: Item[]; createdAt: string; status?: string; finishedAt?: string };
 
 export default function SeparacaoAtualPage() {
   const [data, setData] = useState<Separation | null>(null);
@@ -131,8 +131,13 @@ export default function SeparacaoAtualPage() {
           <div><strong>Separação completa</strong><span>Todos os {total} itens foram separados.</span></div>
           <button className="primary-button" onClick={() => {
             const finished = { ...data, finishedAt: new Date().toISOString(), status: "concluida" };
+            const history = JSON.parse(localStorage.getItem("listapedidos:historico") || "[]");
+            const withoutCurrent = history.filter((entry: Separation) => entry.id !== finished.id);
+            withoutCurrent.unshift(finished);
+            localStorage.setItem("listapedidos:historico", JSON.stringify(withoutCurrent.slice(0, 100)));
             localStorage.setItem("listapedidos:separacao-concluida", JSON.stringify(finished));
-            alert("Separação finalizada.");
+            localStorage.setItem("listapedidos:separacao-atual", JSON.stringify(finished));
+            alert("Separação finalizada e salva no histórico.");
           }}>Finalizar</button>
         </section>
       )}
