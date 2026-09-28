@@ -113,18 +113,7 @@ export default function HistoricoPage() {
               </div>
               <div className="history-actions">
                 <span className="badge">{Math.round((separated / Math.max(total,1))*100)}%</span>
-                <button
-                  className="icon-button"
-                  type="button"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    openSeparation(entry);
-                  }}
-                  aria-label="Abrir separação"
-                  title="Abrir separação"
-                >
-                  <FolderOpen size={18} />
-                </button>
+                <FolderOpen size={20} aria-hidden="true" />
               </div>
             </article>
           );
