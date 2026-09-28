@@ -93,3 +93,8 @@ th { background:#f7faf8; font-size:12px; }
   .quantity-area > div:first-child { align-items:flex-start; }
   .finish-card { flex-direction:column; align-items:stretch; }
 }
+
+.history-card { cursor:pointer; transition:transform .15s, box-shadow .15s, border-color .15s; }
+.history-card:hover { transform:translateY(-1px); border-color:#c5dfcf; box-shadow:0 5px 18px rgba(20,50,35,.08); }
+.history-card:focus-visible { outline:3px solid #9bd0b0; outline-offset:2px; }
+.history-actions { display:flex; align-items:center; gap:10px; flex:0 0 auto; }
