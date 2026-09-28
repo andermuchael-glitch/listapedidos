@@ -1,0 +1,141 @@
+"use client";
+
+import Link from "next/link";
+import { useEffect, useMemo, useState } from "react";
+import { ArrowLeft, Check, Minus, Plus, Search } from "lucide-react";
+
+type Item = { id: string; codigo: string; descricao: string; quantidade: number; separado: number };
+type Separation = { id: string; fileName: string; numero: string; cliente: string; items: Item[]; createdAt: string };
+
+export default function SeparacaoAtualPage() {
+  const [data, setData] = useState<Separation | null>(null);
+  const [query, setQuery] = useState("");
+  const [filter, setFilter] = useState<"todos" | "pendentes" | "separados">("todos");
+
+  useEffect(() => {
+    const raw = localStorage.getItem("listapedidos:separacao-atual");
+    if (raw) setData(JSON.parse(raw));
+  }, []);
+
+  function save(next: Separation) {
+    setData(next);
+    localStorage.setItem("listapedidos:separacao-atual", JSON.stringify(next));
+  }
+
+  function changeQuantity(id: string, delta: number) {
+    if (!data) return;
+    const items = data.items.map((item) =>
+      item.id === id
+        ? { ...item, separado: Math.max(0, Math.min(item.quantidade, item.separado + delta)) }
+        : item
+    );
+    save({ ...data, items });
+  }
+
+  const visibleItems = useMemo(() => {
+    if (!data) return [];
+    const q = query.toLowerCase().trim();
+    return data.items.filter((item) => {
+      const matchesQuery = !q || item.codigo.toLowerCase().includes(q) || item.descricao.toLowerCase().includes(q);
+      const matchesFilter =
+        filter === "todos" ||
+        (filter === "pendentes" && item.separado < item.quantidade) ||
+        (filter === "separados" && item.separado === item.quantidade);
+      return matchesQuery && matchesFilter;
+    });
+  }, [data, query, filter]);
+
+  if (!data) {
+    return (
+      <main className="app-shell">
+        <header className="topbar"><Link className="back-link" href="/separacao/">← Voltar</Link><h1>Separação</h1></header>
+        <section className="empty-card">
+          <h2>Nenhuma separação carregada</h2>
+          <p className="muted">Importe uma planilha para criar a lista.</p>
+          <Link className="primary-button" href="/separacao/nova/">Importar planilha</Link>
+        </section>
+      </main>
+    );
+  }
+
+  const total = data.items.reduce((sum, item) => sum + item.quantidade, 0);
+  const separated = data.items.reduce((sum, item) => sum + item.separado, 0);
+  const completed = data.items.filter((item) => item.separado === item.quantidade).length;
+  const progress = total ? Math.round((separated / total) * 100) : 0;
+
+  return (
+    <main className="app-shell">
+      <header className="topbar">
+        <div>
+          <Link className="back-link" href="/separacao/">← Separações</Link>
+          <h1>Separação</h1>
+        </div>
+        <span className="badge">{progress}%</span>
+      </header>
+
+      <section className="order-header">
+        <div>
+          <p className="eyebrow">PEDIDO {data.numero ? `#${data.numero}` : ""}</p>
+          <h2>{data.cliente || "Cliente não identificado"}</h2>
+          <p className="muted">{data.fileName}</p>
+        </div>
+        <div className="big-progress"><strong>{separated}</strong><span> / {total} unidades</span></div>
+      </section>
+
+      <div className="progress-track"><div style={{ width: `${progress}%` }} /></div>
+
+      <div className="stats-row">
+        <span><strong>{completed}</strong> concluídos</span>
+        <span><strong>{data.items.length - completed}</strong> pendentes</span>
+        <span><strong>{total - separated}</strong> faltam</span>
+      </div>
+
+      <div className="search-box">
+        <Search size={19} />
+        <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Pesquisar produto ou código" />
+      </div>
+
+      <div className="filter-row">
+        <button className={filter === "todos" ? "filter active" : "filter"} onClick={() => setFilter("todos")}>Todos</button>
+        <button className={filter === "pendentes" ? "filter active" : "filter"} onClick={() => setFilter("pendentes")}>Pendentes</button>
+        <button className={filter === "separados" ? "filter active" : "filter"} onClick={() => setFilter("separados")}>Separados</button>
+      </div>
+
+      <section className="items-list">
+        {visibleItems.map((item) => {
+          const complete = item.separado === item.quantidade;
+          return (
+            <article className={complete ? "item-card complete" : "item-card"} key={item.id}>
+              <div className="item-main">
+                <div className={complete ? "check-circle done" : "check-circle"}>{complete ? <Check size={18} /> : null}</div>
+                <div>
+                  <strong>{item.codigo || "Sem código"}</strong>
+                  <p>{item.descricao || "Produto sem descrição"}</p>
+                </div>
+              </div>
+              <div className="quantity-area">
+                <div><span>Separado</span><strong>{item.separado} / {item.quantidade}</strong></div>
+                <div className="quantity-controls">
+                  <button onClick={() => changeQuantity(item.id, -1)} disabled={item.separado === 0} aria-label="Diminuir"><Minus size={17} /></button>
+                  <button onClick={() => changeQuantity(item.id, 1)} disabled={complete} aria-label="Aumentar"><Plus size={17} /></button>
+                </div>
+              </div>
+            </article>
+          );
+        })}
+        {!visibleItems.length && <div className="empty-card"><h3>Nenhum item encontrado</h3><p className="muted">Altere a pesquisa ou o filtro.</p></div>}
+      </section>
+
+      {progress === 100 && (
+        <section className="finish-card">
+          <div><strong>Separação completa</strong><span>Todos os {total} itens foram separados.</span></div>
+          <button className="primary-button" onClick={() => {
+            const finished = { ...data, finishedAt: new Date().toISOString(), status: "concluida" };
+            localStorage.setItem("listapedidos:separacao-concluida", JSON.stringify(finished));
+            alert("Separação finalizada.");
+          }}>Finalizar</button>
+        </section>
+      )}
+    </main>
+  );
+}
