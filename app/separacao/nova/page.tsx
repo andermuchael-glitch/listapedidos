@@ -120,13 +120,13 @@ async function extractPdfRows(file: File) {
     if (ignored(line)) continue;
 
     // Formato comum dos orçamentos: 4 48,90 195,60BP MOD 27 - VASCO - BOLSA
-    const itemMatch = line.match(/^(\\d+)\\s+[\\d.,]+\\s+[\\d.,]+\\s*(.+)$/);
+    const itemMatch = line.match(/^(\d+)\s+[\d.,]+\s+[\d.,]+\s*(.+)$/);
     if (itemMatch) {
       addCurrent();
 
       const q = Number(itemMatch[1]);
       const rest = itemMatch[2].trim();
-      const codeMatch = rest.match(/^([A-Za-z0-9]+(?:\\s+MOD\\s+\\d+)?)\\s*-\\s*(.+)$/i);
+      const codeMatch = rest.match(/^([A-Za-z0-9]+(?:\s+MOD\s+\d+)?)\s*-\s*(.+)$/i);
 
       if (Number.isFinite(q) && q > 0) {
         current = {
@@ -138,7 +138,7 @@ async function extractPdfRows(file: File) {
       continue;
     }
 
-    if (/^valor l[ií]quido|^total(?:\\s|$)|^condi[cç][aã]o de pagamento|^forma de pagamento|^n[ºo]\\s+vencimento/i.test(line)) {
+    if (/^valor l[ií]quido|^total(?:\s|$)|^condi[cç][aã]o de pagamento|^forma de pagamento|^n[ºo]\s+vencimento/i.test(line)) {
       addCurrent();
       continue;
     }
