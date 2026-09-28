@@ -2,27 +2,46 @@
 
 import Link from "next/link";
 import { useState } from "react";
-import { ArrowLeft, CheckCircle2, FileSpreadsheet, Upload } from "lucide-react";
+import { CheckCircle2, FileSpreadsheet, Upload } from "lucide-react";
 import * as XLSX from "xlsx";
 
+type SheetRow = Record<string, unknown>;
 type Preview = {
   fileName: string;
   headers: string[];
-  rows: Record<string, unknown>[];
+  rows: SheetRow[];
   totalRows: number;
 };
+
+const normalize = (value: unknown) =>
+  String(value ?? "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .trim();
+
+function findColumn(headers: string[], terms: string[]) {
+  return headers.find((header) => terms.some((term) => normalize(header).includes(normalize(term))));
+}
+
+function toNumber(value: unknown) {
+  if (typeof value === "number") return value;
+  const text = String(value ?? "").replace(/\./g, "").replace(",", ".");
+  const number = Number(text.replace(/[^0-9.-]/g, ""));
+  return Number.isFinite(number) ? number : 0;
+}
 
 export default function NovaSeparacaoPage() {
   const [preview, setPreview] = useState<Preview | null>(null);
   const [error, setError] = useState("");
+  const [creating, setCreating] = useState(false);
 
   async function handleFile(file?: File) {
     if (!file) return;
     setError("");
     setPreview(null);
 
-    const valid = /\.(xlsx|xls|csv)$/i.test(file.name);
-    if (!valid) {
+    if (!/\.(xlsx|xls|csv)$/i.test(file.name)) {
       setError("Selecione uma planilha XLSX, XLS ou CSV.");
       return;
     }
@@ -31,25 +50,59 @@ export default function NovaSeparacaoPage() {
       const buffer = await file.arrayBuffer();
       const workbook = XLSX.read(buffer, { type: "array" });
       const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
-      const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(firstSheet, { defval: "" });
-      const headers = rows.length ? Object.keys(rows[0]) : XLSX.utils.sheet_to_json(firstSheet, { header: 1 })[0]?.map(String) ?? [];
-
+      const rows = XLSX.utils.sheet_to_json<SheetRow>(firstSheet, { defval: "" });
       if (!rows.length) {
         setError("A planilha não possui linhas de dados.");
         return;
       }
 
-      setPreview({ fileName: file.name, headers, rows: rows.slice(0, 5), totalRows: rows.length });
+      const headers = Object.keys(rows[0]);
+      setPreview({ fileName: file.name, headers, rows: rows.slice(0, 8), totalRows: rows.length });
     } catch {
       setError("Não foi possível ler a planilha. Verifique o arquivo e tente novamente.");
     }
+  }
+
+  function createList() {
+    if (!preview) return;
+    setCreating(true);
+
+    const codigo = findColumn(preview.headers, ["codigo", "cod", "sku", "ref"]);
+    const descricao = findColumn(preview.headers, ["descricao", "produto", "item", "nome"]);
+    const quantidade = findColumn(preview.headers, ["quantidade", "qtd", "qtde", "quant"]);
+    const pedido = findColumn(preview.headers, ["venda", "pedido", "ordem"]);
+    const cliente = findColumn(preview.headers, ["cliente", "razao", "destinatario"]);
+
+    const items = preview.rows.map((row, index) => ({
+      id: String(index + 1),
+      codigo: codigo ? String(row[codigo] ?? "") : "",
+      descricao: descricao ? String(row[descricao] ?? "") : "",
+      quantidade: quantidade ? toNumber(row[quantidade]) : 0,
+      separado: 0
+    }));
+
+    const totalRows = preview.totalRows;
+    const data = {
+      id: `sep-${Date.now()}`,
+      fileName: preview.fileName,
+      numero: pedido ? String(preview.rows[0]?.[pedido] ?? "") : "",
+      cliente: cliente ? String(preview.rows[0]?.[cliente] ?? "") : "",
+      items,
+      totalRows,
+      createdAt: new Date().toISOString()
+    };
+
+    localStorage.setItem("listapedidos:separacao-atual", JSON.stringify(data));
+    setTimeout(() => {
+      window.location.href = "/listapedidos/separacao/atual/";
+    }, 100);
   }
 
   return (
     <main className="app-shell">
       <header className="topbar">
         <div>
-          <Link className="back-link" href="/separacao">← Voltar</Link>
+          <Link className="back-link" href="/separacao/">← Voltar</Link>
           <h1>Nova separação</h1>
         </div>
         <FileSpreadsheet size={26} />
@@ -59,7 +112,7 @@ export default function NovaSeparacaoPage() {
         <div className="upload-icon"><Upload size={30} /></div>
         <p className="eyebrow">ETAPA 1</p>
         <h2>Importe a planilha do pedido</h2>
-        <p className="muted">O arquivo será lido pelo aplicativo e os dados serão apresentados para conferência antes de criar a lista.</p>
+        <p className="muted">O aplicativo lê a primeira aba e prepara os dados para conferência. A planilha original nunca é alterada.</p>
 
         <label className="upload-button">
           <FileSpreadsheet size={20} />
@@ -98,12 +151,12 @@ export default function NovaSeparacaoPage() {
           </div>
 
           <div className="notice">
-            <strong>Próxima etapa</strong>
-            <span>Após a conferência, vamos identificar pedido, cliente, produtos e quantidades para criar a lista de separação.</span>
+            <strong>Pronto para criar a lista</strong>
+            <span>O sistema tentará identificar automaticamente código, produto, quantidade, pedido e cliente.</span>
           </div>
 
-          <button className="primary-button full-width" type="button" disabled>
-            Criar lista de separação — próxima etapa
+          <button className="primary-button full-width" type="button" onClick={createList} disabled={creating}>
+            {creating ? "Criando lista..." : "Criar lista de separação"}
           </button>
         </section>
       )}
