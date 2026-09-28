@@ -31,7 +31,13 @@ function numberValue(v: unknown) {
 }
 
 function findColumn(row: Cell[], names: string[]) {
-  return row.findIndex((v) => names.some((name) => norm(v) === norm(name)));
+  return row.findIndex((v) => {
+    const value = norm(v);
+    return names.some((name) => {
+      const target = norm(name);
+      return value === target || value.includes(target) || target.includes(value);
+    });
+  });
 }
 
 function locateProductTable(matrix: SheetMatrix) {
@@ -44,7 +50,8 @@ function locateProductTable(matrix: SheetMatrix) {
       "Descricao do produto",
       "Produto",
       "Descrição",
-      "Descricao"
+      "Descricao",
+      "Produto/Descrição"
     ]);
 
     if (quantityCol >= 0 && codeCol >= 0 && productCol >= 0) {
