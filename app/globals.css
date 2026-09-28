@@ -98,3 +98,6 @@ th { background:#f7faf8; font-size:12px; }
 .history-card:hover { transform:translateY(-1px); border-color:#c5dfcf; box-shadow:0 5px 18px rgba(20,50,35,.08); }
 .history-card:focus-visible { outline:3px solid #9bd0b0; outline-offset:2px; }
 .history-actions { display:flex; align-items:center; gap:10px; flex:0 0 auto; }
+
+.delete-history-button { width:40px; height:40px; border:1px solid #ead5d5; background:#fff; color:var(--danger); border-radius:10px; cursor:pointer; display:grid; place-items:center; }
+.delete-history-button:hover { background:#fff2f2; border-color:#e6bcbc; }
