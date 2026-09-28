@@ -34,6 +34,7 @@ function numberValue(v: unknown) {
 function findColumn(row: Cell[], names: string[]) {
   return row.findIndex((v) => {
     const value = norm(v);
+    if (!value) return false;
     return names.some((name) => {
       const target = norm(name);
       return value === target || value.includes(target) || target.includes(value);
