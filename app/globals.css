@@ -101,3 +101,9 @@ th { background:#f7faf8; font-size:12px; }
 
 .delete-history-button { width:40px; height:40px; border:1px solid #ead5d5; background:#fff; color:var(--danger); border-radius:10px; cursor:pointer; display:grid; place-items:center; }
 .delete-history-button:hover { background:#fff2f2; border-color:#e6bcbc; }
+
+.quantity-value { display:flex; flex-direction:column; align-items:flex-end; gap:3px; }
+.quantity-input-row { display:flex; align-items:center; gap:5px; }
+.quantity-input { width:64px; padding:7px 6px; border:1px solid var(--line); border-radius:9px; background:#fff; color:var(--text); font-weight:800; text-align:center; outline:none; }
+.quantity-input:focus { border-color:#9bc9ad; box-shadow:0 0 0 2px #e8f5ed; }
+@media (max-width:700px) { .quantity-value { align-items:flex-start; } .quantity-input { width:72px; } }
