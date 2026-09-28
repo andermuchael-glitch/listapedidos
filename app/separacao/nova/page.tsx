@@ -148,8 +148,10 @@ async function extractPdfRows(file: File) {
     if (vendaMatch && !numero) numero = vendaMatch[1];
 
     if (!cliente) {
-      const clienteMatch = textLine.match(/^(GIGANTE DA COLINA\s*-\s*.+)$/i);
-      if (clienteMatch) cliente = clienteMatch[1].trim();
+      // O nome do cliente é a linha que começa com "GIGANTE DA COLINA".
+      // Ignoramos telefone, CNPJ e demais dados comerciais do cabeçalho.
+      const clienteMatch = textLine.match(/^(GIGANTE DA COLINA(?:\s*-\s*[^0-9]+)?)/i);
+      if (clienteMatch) cliente = clienteMatch[1].replace(/\s+/g, " ").trim();
       else if (/^GIGANTE DA COLINA$/i.test(textLine)) cliente = "GIGANTE DA COLINA";
     }
 
