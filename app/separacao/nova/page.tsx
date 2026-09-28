@@ -109,7 +109,7 @@ async function extractPdfRows(file: File) {
     if (!current) return;
 
     const description = current.description
-      .replace(/\\s+/g, " ")
+      .replace(/\s+/g, " ")
       .replace(/^[ -]+|[ -]+$/g, "")
       .trim();
 
@@ -125,24 +125,24 @@ async function extractPdfRows(file: File) {
   };
 
   const isMoney = (text: string) =>
-    /^-?\\d{1,3}(?:[.]\\d{3})*,\\d{2}$/.test(text) ||
-    /^-?\\d+,\\d{2}$/.test(text);
+    /^-?\d{1,3}(?:[.]\d{3})*,\d{2}$/.test(text) ||
+    /^-?\d+,\d{2}$/.test(text);
 
   const isPageOrFooter = (line: string) =>
-    /produto\\/servi[cç]o|detalhe do item|valor unit[aá]rio|subtotal/i.test(line) ||
-    /continua na pr[oó]xima p[aá]gina|p[aá]gina\\s+\\d+\\s+de\\s+\\d+/i.test(line) ||
-    /^valor l[ií]quido|^total(?:\\s|$)|^condi[cç][aã]o de pagamento|^forma de pagamento|^n[ºo]\\s+vencimento/i.test(line);
+    /produto\/servi[cç]o|detalhe do item|valor unit[aá]rio|subtotal/i.test(line) ||
+    /continua na pr[oó]xima p[aá]gina|p[aá]gina\s+\d+\s+de\s+\d+/i.test(line) ||
+    /^valor l[ií]quido|^total(?:\s|$)|^condi[cç][aã]o de pagamento|^forma de pagamento|^n[ºo]\s+vencimento/i.test(line);
 
   for (const line of visualLines) {
     const parts = line.items.map((item) => item.text).filter(Boolean);
-    const textLine = parts.join(" ").replace(/\\s+/g, " ").trim();
+    const textLine = parts.join(" ").replace(/\s+/g, " ").trim();
 
     if (!textLine || isPageOrFooter(textLine)) continue;
 
     // A linha de produto começa com a quantidade na primeira coluna.
     // O restante pode conter duas colunas de texto e, no final, dois valores.
     const first = parts[0];
-    const qMatch = first.match(/^(\\d+)$/);
+    const qMatch = first.match(/^(\d+)$/);
 
     if (qMatch) {
       const q = Number(qMatch[1]);
@@ -162,7 +162,7 @@ async function extractPdfRows(file: File) {
         const detailParts = textParts.slice(1);
 
         const codeMatch = productService.match(
-          /^([A-Za-z0-9]+(?:\\s+MOD\\s+\\d+)?(?:\\s*-\\s*[A-Za-z0-9]+)?)\\s*-\\s*(.+)$/i
+          /^([A-Za-z0-9]+(?:\s+MOD\s+\d+)?(?:\s*-\s*[A-Za-z0-9]+)?)\s*-\s*(.+)$/i
         );
 
         let code = "";
