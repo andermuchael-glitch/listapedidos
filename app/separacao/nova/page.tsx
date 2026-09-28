@@ -48,7 +48,7 @@ async function extractPdfRows(file: File) {
   // Para a separação, somente Quantidade + Código + Descrição são aproveitados.
   const pdfjs = await import("pdfjs-dist/legacy/build/pdf.js");
   const buffer = await file.arrayBuffer();
-  const pdf = await pdfjs.getDocument({
+  const pdf = await (pdfjs.getDocument as unknown as (options: { data: Uint8Array; disableWorker?: boolean }) => { promise: Promise<any> })({
     data: new Uint8Array(buffer),
     disableWorker: true
   }).promise;
