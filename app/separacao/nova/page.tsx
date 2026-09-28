@@ -59,20 +59,25 @@ async function extractPdfRows(file: File) {
     const page = await pdf.getPage(pageNumber);
     const content = await page.getTextContent();
 
-    const items = content.items
-      .filter((item: unknown): item is { str: string; transform: number[] } =>
-        typeof item === "object" &&
-        item !== null &&
-        "str" in item &&
-        "transform" in item &&
-        typeof (item as { str?: unknown }).str === "string"
-      )
-      .map((item) => ({
+    type PdfTextItem = { str: string; transform: number[] };
+
+    const items = (content.items as unknown[])
+      .filter((item): item is PdfTextItem => {
+        if (typeof item !== "object" || item === null) return false;
+        const candidate = item as { str?: unknown; transform?: unknown };
+        return (
+          typeof candidate.str === "string" &&
+          Array.isArray(candidate.transform) &&
+          candidate.transform.length >= 6 &&
+          candidate.transform.every((value) => typeof value === "number")
+        );
+      })
+      .map((item: PdfTextItem) => ({
         text: item.str.trim(),
         x: item.transform[4],
         y: item.transform[5]
       }))
-      .filter((item) => item.text);
+      .filter((item: { text: string }) => item.text);
 
     items.sort((a, b) => {
       if (Math.abs(a.y - b.y) > 2) return b.y - a.y;
