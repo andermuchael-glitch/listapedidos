@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import { History, Download, Upload, Trash2 } from "lucide-react";
+import { History, Download, Upload, Trash2, FolderOpen } from "lucide-react";
 
 type Item = { id: string; codigo: string; descricao: string; quantidade: number; separado: number };
 type Separation = { id: string; fileName: string; items: Item[]; createdAt: string; status?: string; finishedAt?: string; archivedAt?: string };
@@ -51,6 +51,11 @@ export default function HistoricoPage() {
     reader.readAsText(file);
   }
 
+  function openSeparation(entry: Separation) {
+    localStorage.setItem("listapedidos:separacao-atual", JSON.stringify(entry));
+    window.location.href = "/listapedidos/separacao/atual/";
+  }
+
   function clearHistory() {
     if (!confirm("Apagar todo o histórico? O backup não será afetado.")) return;
     localStorage.removeItem("listapedidos:historico");
@@ -88,12 +93,39 @@ export default function HistoricoPage() {
           const total = entry.items.reduce((s, i) => s + i.quantidade, 0);
           const separated = entry.items.reduce((s, i) => s + i.separado, 0);
           return (
-            <article className="item-card" key={entry.id}>
+            <article
+              className="item-card history-card"
+              key={entry.id}
+              role="button"
+              tabIndex={0}
+              onClick={() => openSeparation(entry)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  openSeparation(entry);
+                }
+              }}
+              title="Abrir esta separação"
+            >
               <div className="item-main">
                 <div className="check-circle">{entry.status === "concluida" ? "✓" : "•"}</div>
                 <div><strong>{entry.fileName}</strong><p>{separated} / {total} unidades separadas · {entry.status === "concluida" ? "Concluída" : "Em andamento"}</p></div>
               </div>
-              <span className="badge">{Math.round((separated / Math.max(total,1))*100)}%</span>
+              <div className="history-actions">
+                <span className="badge">{Math.round((separated / Math.max(total,1))*100)}%</span>
+                <button
+                  className="icon-button"
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    openSeparation(entry);
+                  }}
+                  aria-label="Abrir separação"
+                  title="Abrir separação"
+                >
+                  <FolderOpen size={18} />
+                </button>
+              </div>
             </article>
           );
         })}
