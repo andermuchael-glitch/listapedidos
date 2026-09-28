@@ -137,11 +137,13 @@ async function extractPdfRows(file: File) {
     /continua na pr[oó]xima p[aá]gina|p[aá]gina\s+\d+\s+de\s+\d+/i.test(line) ||
     /^valor l[ií]quido|^total(?:\s|$)|^condi[cç][aã]o de pagamento|^forma de pagamento|^n[ºo]\s+vencimento/i.test(line);
 
+  let productSectionEnded = false;
+
   for (const line of visualLines) {
     const parts = line.items.map((item) => item.text).filter(Boolean);
     const textLine = parts.join(" ").replace(/\s+/g, " ").trim();
 
-    if (!textLine) continue;
+    if (!textLine || productSectionEnded) continue;
 
     // Metadados do pedido ficam no cabeçalho do PDF.
     const vendaMatch = textLine.match(/\bVenda\s+(\d+)\b/i);
@@ -153,6 +155,18 @@ async function extractPdfRows(file: File) {
       const clienteMatch = textLine.match(/^(GIGANTE DA COLINA(?:\s*-\s*[^0-9]+)?)/i);
       if (clienteMatch) cliente = clienteMatch[1].replace(/\s+/g, " ").trim();
       else if (/^GIGANTE DA COLINA$/i.test(textLine)) cliente = "GIGANTE DA COLINA";
+    }
+
+    // Depois de "Total", "Valor líquido" ou "Condição de pagamento",
+    // não existem mais produtos. O que vem abaixo são parcelas/pagamento
+    // e nunca deve entrar na separação.
+    if (/^total(?:\s|$)/i.test(textLine) ||
+        /^valor\s+l[ií]quido/i.test(textLine) ||
+        /^condi[cç][aã]o\s+de\s+pagamento/i.test(textLine) ||
+        /^forma\s+de\s+pagamento/i.test(textLine)) {
+      finishCurrent();
+      productSectionEnded = true;
+      continue;
     }
 
     if (isPageOrFooter(textLine)) continue;
