@@ -174,12 +174,13 @@ export default function NovaSeparacaoPage() {
       try {
         const previous = JSON.parse(previousRaw);
         const history = JSON.parse(localStorage.getItem("listapedidos:historico") || "[]");
-        history.unshift({
+        const withoutSameId = history.filter((entry: { id?: string }) => entry.id !== previous.id);
+        withoutSameId.unshift({
           ...previous,
           status: previous.status || "em_andamento",
           archivedAt: new Date().toISOString()
         });
-        localStorage.setItem("listapedidos:historico", JSON.stringify(history.slice(0, 100)));
+        localStorage.setItem("listapedidos:historico", JSON.stringify(withoutSameId.slice(0, 100)));
       } catch {
         // Não impede a criação da nova separação.
       }
