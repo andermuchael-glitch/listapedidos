@@ -17,6 +17,8 @@ type Preview = {
   launchRow: number;
   rows: SheetMatrix;
   allRows: SheetMatrix;
+  numero?: string;
+  cliente?: string;
 };
 
 const norm = (v: unknown) =>
@@ -104,6 +106,8 @@ async function extractPdfRows(file: File) {
 
   const rows: SheetMatrix = [];
   let current: { q: number; code: string; description: string } | null = null;
+  let numero = "";
+  let cliente = "";
 
   const finishCurrent = () => {
     if (!current) return;
@@ -137,7 +141,19 @@ async function extractPdfRows(file: File) {
     const parts = line.items.map((item) => item.text).filter(Boolean);
     const textLine = parts.join(" ").replace(/\s+/g, " ").trim();
 
-    if (!textLine || isPageOrFooter(textLine)) continue;
+    if (!textLine) continue;
+
+    // Metadados do pedido ficam no cabeçalho do PDF.
+    const vendaMatch = textLine.match(/\bVenda\s+(\d+)\b/i);
+    if (vendaMatch && !numero) numero = vendaMatch[1];
+
+    if (!cliente) {
+      const clienteMatch = textLine.match(/^GIGANTE DA COLINA\s*-\s*(.+)$/i);
+      if (clienteMatch) cliente = clienteMatch[1].trim();
+      else if (/^GIGANTE DA COLINA$/i.test(textLine)) cliente = "GIGANTE DA COLINA";
+    }
+
+    if (isPageOrFooter(textLine)) continue;
 
     // A linha de produto começa com a quantidade na primeira coluna.
     // O restante pode conter duas colunas de texto e, no final, dois valores.
@@ -210,7 +226,7 @@ async function extractPdfRows(file: File) {
     );
   }
 
-  return rows;
+  return { rows, numero, cliente };
 }
 
 function locateProductTable(matrix: SheetMatrix) {
@@ -302,17 +318,20 @@ export default function NovaSeparacaoPage() {
       const isPdf = file.name.toLowerCase().endsWith(".pdf");
 
       if (isPdf) {
-        const rows = await extractPdfRows(file);
+        const pdfResult = await extractPdfRows(file);
         setPreview({
           fileName: file.name,
+          numero: pdfResult.numero,
+          cliente: pdfResult.cliente,
+
           sheetName: "PDF",
           headerRow: -1,
           quantityCol: 0,
           codeCol: 1,
           productCol: 2,
           launchRow: -1,
-          rows: rows.slice(0, 8),
-          allRows: rows
+          rows: pdfResult.rows.slice(0, 8),
+          allRows: pdfResult.rows
         });
         return;
       }
@@ -391,8 +410,8 @@ export default function NovaSeparacaoPage() {
         id: `sep-${Date.now()}`,
         fileName: preview.fileName,
         sheetName: preview.sheetName,
-        numero: "",
-        cliente: "",
+        numero: preview.numero || "",
+        cliente: preview.cliente || "",
         items,
         totalRows: items.length,
         createdAt: new Date().toISOString()
