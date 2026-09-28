@@ -56,6 +56,16 @@ export default function HistoricoPage() {
     window.location.href = "/listapedidos/separacao/atual/";
   }
 
+  function deleteSeparation(id: string) {
+    const entry = history.find((item) => item.id === id);
+    if (!entry) return;
+    if (!confirm(`Excluir a separação "${entry.fileName}" do histórico? Esta ação não apaga o arquivo de backup.`)) return;
+
+    const next = history.filter((item) => item.id !== id);
+    localStorage.setItem("listapedidos:historico", JSON.stringify(next));
+    setHistory(next);
+  }
+
   function clearHistory() {
     if (!confirm("Apagar todo o histórico? O backup não será afetado.")) return;
     localStorage.removeItem("listapedidos:historico");
@@ -114,6 +124,18 @@ export default function HistoricoPage() {
               <div className="history-actions">
                 <span className="badge">{Math.round((separated / Math.max(total,1))*100)}%</span>
                 <FolderOpen size={20} aria-hidden="true" />
+                <button
+                  className="delete-history-button"
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    deleteSeparation(entry.id);
+                  }}
+                  aria-label={`Excluir ${entry.fileName}`}
+                  title="Excluir pedido"
+                >
+                  <Trash2 size={18} />
+                </button>
               </div>
             </article>
           );
