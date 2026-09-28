@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { ArrowLeft, Plus } from "lucide-react";
+import { ArrowLeft, Plus, Download, Upload } from "lucide-react";
 
 export default function SeparacaoPage() {
   return (
@@ -17,6 +17,9 @@ export default function SeparacaoPage() {
           <h2>Suas separações</h2>
           <p className="muted">As ordens importadas aparecerão aqui.</p>
           <Link className="primary-button" href="/separacao/nova">Nova separação</Link>
+          <div className="filter-row" style={{marginTop: 12}}>
+            <Link className="filter" href="/historico">Histórico e backup</Link>
+          </div>
         </div>
       </section>
     </main>
