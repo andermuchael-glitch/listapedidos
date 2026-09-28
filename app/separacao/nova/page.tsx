@@ -46,7 +46,7 @@ async function extractPdfRows(file: File) {
   // PDFs de orçamento têm uma estrutura diferente das planilhas:
   // Quantidade + Valor unitário + Subtotal + Código/Descrição.
   // Para a separação, somente Quantidade + Código + Descrição são aproveitados.
-  const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
+  const pdfjs = await import("pdfjs-dist/legacy/build/pdf.js");
   const buffer = await file.arrayBuffer();
   const pdf = await pdfjs.getDocument({
     data: new Uint8Array(buffer),
