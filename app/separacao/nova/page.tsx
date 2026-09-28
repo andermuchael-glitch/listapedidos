@@ -47,10 +47,15 @@ async function extractPdfRows(file: File) {
   // Quantidade + Valor unitário + Subtotal + Código/Descrição.
   // Para a separação, somente Quantidade + Código + Descrição são aproveitados.
   const pdfjs = await import("pdfjs-dist/legacy/build/pdf.js");
+
+  // No GitHub Pages, o PDF.js não consegue localizar automaticamente o worker
+  // gerado pelo bundler. Usamos o worker oficial da mesma versão via CDN.
+  pdfjs.GlobalWorkerOptions.workerSrc =
+    "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
+
   const buffer = await file.arrayBuffer();
-  const pdf = await (pdfjs.getDocument as unknown as (options: { data: Uint8Array; disableWorker?: boolean }) => { promise: Promise<any> })({
-    data: new Uint8Array(buffer),
-    disableWorker: true
+  const pdf = await pdfjs.getDocument({
+    data: new Uint8Array(buffer)
   }).promise;
 
   const lines: string[] = [];
