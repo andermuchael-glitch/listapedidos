@@ -14,6 +14,7 @@ type Preview = {
   quantityCol: number;
   codeCol: number;
   productCol: number;
+  launchRow: number;
   rows: SheetMatrix;
   allRows: SheetMatrix;
 };
@@ -41,7 +42,22 @@ function findColumn(row: Cell[], names: string[]) {
 }
 
 function locateProductTable(matrix: SheetMatrix) {
+  // Nesta planilha existem totais/resumos acima da área real do pedido.
+  // O ponto de partida correto é o bloco "LANÇAMENTO DE PEDIDO".
+  let launchRow = -1;
+
   for (let r = 0; r < matrix.length; r++) {
+    const rowText = (matrix[r] ?? []).map(norm).join(" ");
+    if (rowText.includes("lancamento de pedido")) {
+      launchRow = r;
+      break;
+    }
+  }
+
+  // Se houver "LANÇAMENTO DE PEDIDO", ignoramos tudo que estiver acima.
+  const firstRow = launchRow >= 0 ? launchRow + 1 : 0;
+
+  for (let r = firstRow; r < matrix.length; r++) {
     const row = matrix[r] ?? [];
     const quantityCol = findColumn(row, ["Quantidade", "Qtd", "Qtde"]);
     const codeCol = findColumn(row, ["Código", "Codigo", "Cod", "SKU", "Referência", "Referencia"]);
@@ -56,24 +72,34 @@ function locateProductTable(matrix: SheetMatrix) {
 
     if (quantityCol >= 0 && codeCol >= 0 && productCol >= 0) {
       const rows: SheetMatrix = [];
+
       for (let i = r + 1; i < matrix.length; i++) {
         const line = matrix[i] ?? [];
         const q = numberValue(line[quantityCol]);
         const code = cell(line[codeCol]);
         const product = cell(line[productCol]);
 
+        // Linhas vazias encerram a tabela depois que já encontramos itens.
         if (!q && !code && !product) {
           if (rows.length) break;
           continue;
         }
 
+        // Só entram linhas que tenham os três campos da tabela de lançamento.
         if (q > 0 && code && product) {
           rows.push([q, code, product]);
         }
       }
 
       if (rows.length) {
-        return { headerRow: r, quantityCol, codeCol, productCol, rows };
+        return {
+          headerRow: r,
+          quantityCol,
+          codeCol,
+          productCol,
+          rows,
+          launchRow
+        };
       }
     }
   }
@@ -121,6 +147,7 @@ export default function NovaSeparacaoPage() {
         quantityCol: found.quantityCol,
         codeCol: found.codeCol,
         productCol: found.productCol,
+        launchRow: found.launchRow,
         rows: found.rows.slice(0, 8),
         allRows: found.rows
       });
@@ -173,7 +200,7 @@ export default function NovaSeparacaoPage() {
         <p className="eyebrow">ETAPA 1</p>
         <h2>Selecione a planilha</h2>
         <p className="muted">
-          A planilha pode ter várias informações. O ListaPedidos vai procurar a tabela que contém
+          A planilha pode ter totais e resumos antes dos produtos. O ListaPedidos ignora tudo acima de <strong>LANÇAMENTO DE PEDIDO</strong> e usa somente a tabela abaixo dela, que contém
           <strong> Quantidade, Código e Produto/Descrição do produto</strong> e usar somente essa parte.
         </p>
 
@@ -198,7 +225,7 @@ export default function NovaSeparacaoPage() {
 
           <div className="file-summary">
             <strong>{preview.fileName}</strong>
-            <span>Aba: {preview.sheetName} · Linha do cabeçalho: {preview.headerRow + 1} · {preview.allRows.length} produtos</span>
+            <span>Aba: {preview.sheetName} · Área: LANÇAMENTO DE PEDIDO · Cabeçalho: linha {preview.headerRow + 1} · {preview.allRows.length} produtos</span>
           </div>
 
           <div className="notice">
