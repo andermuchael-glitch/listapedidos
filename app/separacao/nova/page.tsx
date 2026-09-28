@@ -5,98 +5,73 @@ import { useState } from "react";
 import { CheckCircle2, FileSpreadsheet, Upload } from "lucide-react";
 import * as XLSX from "xlsx";
 
-type SheetRow = Record<string, unknown>;
+type Cell = string | number | boolean;
+type SheetMatrix = Cell[][];
 type Preview = {
   fileName: string;
-  headers: string[];
-  rows: SheetRow[];
-  allRows: SheetRow[];
-  totalRows: number;
+  sheetName: string;
+  headerRow: number;
+  quantityCol: number;
+  codeCol: number;
+  productCol: number;
+  rows: SheetMatrix;
+  allRows: SheetMatrix;
 };
 
-const normalize = (value: unknown) =>
-  String(value ?? "")
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .toLowerCase()
-    .trim();
+const norm = (v: unknown) =>
+  String(v ?? "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim();
 
-function toNumber(value: unknown) {
-  if (typeof value === "number") return value;
-  const text = String(value ?? "").replace(/\./g, "").replace(",", ".");
-  const number = Number(text.replace(/[^0-9.-]/g, ""));
-  return Number.isFinite(number) ? number : 0;
+const cell = (v: unknown) => String(v ?? "").trim();
+
+function numberValue(v: unknown) {
+  if (typeof v === "number") return v;
+  const s = cell(v).replace(/\./g, "").replace(",", ".");
+  const n = Number(s.replace(/[^0-9.-]/g, ""));
+  return Number.isFinite(n) ? n : 0;
 }
 
-function findHeaderIndex(headers: unknown[], terms: string[]) {
-  return headers.findIndex((header) => terms.includes(normalize(header)));
+function findColumn(row: Cell[], names: string[]) {
+  return row.findIndex((v) => names.some((name) => norm(v) === norm(name)));
 }
 
-function readProductTable(sheet: XLSX.WorkSheet) {
-  const matrix = XLSX.utils.sheet_to_json<unknown[]>(sheet, {
-    header: 1,
-    defval: "",
-    raw: true
-  });
+function locateProductTable(matrix: SheetMatrix) {
+  for (let r = 0; r < matrix.length; r++) {
+    const row = matrix[r] ?? [];
+    const quantityCol = findColumn(row, ["Quantidade", "Qtd", "Qtde"]);
+    const codeCol = findColumn(row, ["Código", "Codigo", "Cod", "SKU", "Referência", "Referencia"]);
+    const productCol = findColumn(row, [
+      "Descrição do produto",
+      "Descricao do produto",
+      "Produto",
+      "Descrição",
+      "Descricao"
+    ]);
 
-  let headerRowIndex = -1;
-  let quantityIndex = -1;
-  let codeIndex = -1;
-  let descriptionIndex = -1;
+    if (quantityCol >= 0 && codeCol >= 0 && productCol >= 0) {
+      const rows: SheetMatrix = [];
+      for (let i = r + 1; i < matrix.length; i++) {
+        const line = matrix[i] ?? [];
+        const q = numberValue(line[quantityCol]);
+        const code = cell(line[codeCol]);
+        const product = cell(line[productCol]);
 
-  for (let i = 0; i < matrix.length; i++) {
-    const row = matrix[i] ?? [];
-    const q = findHeaderIndex(row, ["quantidade"]);
-    const c = findHeaderIndex(row, ["codigo"]);
-    const d = findHeaderIndex(row, ["descricao do produto", "descricao"]);
+        if (!q && !code && !product) {
+          if (rows.length) break;
+          continue;
+        }
 
-    if (q >= 0 && c >= 0 && d >= 0) {
-      headerRowIndex = i;
-      quantityIndex = q;
-      codeIndex = c;
-      descriptionIndex = d;
-      break;
+        if (q > 0 && code && product) {
+          rows.push([q, code, product]);
+        }
+      }
+
+      if (rows.length) {
+        return { headerRow: r, quantityCol, codeCol, productCol, rows };
+      }
     }
   }
 
-  if (headerRowIndex < 0) {
-    throw new Error("Não encontrei a tabela com as colunas Quantidade, Código e Descrição do produto.");
-  }
-
-  const rows: SheetRow[] = [];
-
-  for (let i = headerRowIndex + 1; i < matrix.length; i++) {
-    const row = matrix[i] ?? [];
-    const quantity = row[quantityIndex];
-    const code = String(row[codeIndex] ?? "").trim();
-    const description = String(row[descriptionIndex] ?? "").trim();
-
-    // A tabela de separação é formada pelas linhas que possuem
-    // quantidade, código e descrição. Ignoramos títulos/rodapés
-    // e qualquer conteúdo que esteja fora dessa tabela.
-    if (!code && !description && String(quantity ?? "").trim() === "") {
-      if (rows.length > 0) break;
-      continue;
-    }
-
-    const numericQuantity = toNumber(quantity);
-    if (!code || !description || numericQuantity <= 0) {
-      if (rows.length > 0) continue;
-      continue;
-    }
-
-    rows.push({
-      Quantidade: numericQuantity,
-      Código: code,
-      "Descrição do produto": description
-    });
-  }
-
-  if (!rows.length) {
-    throw new Error("A tabela foi encontrada, mas não há produtos válidos para separar.");
-  }
-
-  return rows;
+  return null;
 }
 
 export default function NovaSeparacaoPage() {
@@ -109,30 +84,41 @@ export default function NovaSeparacaoPage() {
     setError("");
     setPreview(null);
 
-    if (!/\.(xlsx|xls|csv)$/i.test(file.name)) {
-      setError("Selecione uma planilha XLSX, XLS ou CSV.");
-      return;
-    }
-
     try {
-      const buffer = await file.arrayBuffer();
-      const workbook = XLSX.read(buffer, { type: "array" });
-      const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
-      const allRows = readProductTable(firstSheet);
+      const workbook = XLSX.read(await file.arrayBuffer(), { type: "array" });
+      let found: ReturnType<typeof locateProductTable> = null;
+      let foundSheet = "";
+
+      for (const sheetName of workbook.SheetNames) {
+        const sheet = workbook.Sheets[sheetName];
+        const matrix = XLSX.utils.sheet_to_json<Cell[]>(sheet, {
+          header: 1,
+          defval: "",
+          raw: true
+        });
+        found = locateProductTable(matrix);
+        if (found) {
+          foundSheet = sheetName;
+          break;
+        }
+      }
+
+      if (!found) {
+        throw new Error("Não encontrei uma tabela com Quantidade, Código e Produto/Descrição do produto.");
+      }
 
       setPreview({
         fileName: file.name,
-        headers: ["Quantidade", "Código", "Descrição do produto"],
-        rows: allRows.slice(0, 8),
-        allRows,
-        totalRows: allRows.length
+        sheetName: foundSheet,
+        headerRow: found.headerRow,
+        quantityCol: found.quantityCol,
+        codeCol: found.codeCol,
+        productCol: found.productCol,
+        rows: found.rows.slice(0, 8),
+        allRows: found.rows
       });
-    } catch (err) {
-      setError(
-        err instanceof Error
-          ? err.message
-          : "Não foi possível ler a planilha. Verifique o arquivo e tente novamente."
-      );
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Não foi possível ler a planilha.");
     }
   }
 
@@ -142,26 +128,27 @@ export default function NovaSeparacaoPage() {
 
     const items = preview.allRows.map((row, index) => ({
       id: String(index + 1),
-      codigo: String(row["Código"] ?? ""),
-      descricao: String(row["Descrição do produto"] ?? ""),
-      quantidade: toNumber(row["Quantidade"]),
+      codigo: cell(row[1]),
+      descricao: cell(row[2]),
+      quantidade: numberValue(row[0]),
       separado: 0
     }));
 
-    const data = {
-      id: `sep-${Date.now()}`,
-      fileName: preview.fileName,
-      numero: "",
-      cliente: "",
-      items,
-      totalRows: preview.allRows.length,
-      createdAt: new Date().toISOString()
-    };
+    localStorage.setItem(
+      "listapedidos:separacao-atual",
+      JSON.stringify({
+        id: `sep-${Date.now()}`,
+        fileName: preview.fileName,
+        sheetName: preview.sheetName,
+        numero: "",
+        cliente: "",
+        items,
+        totalRows: items.length,
+        createdAt: new Date().toISOString()
+      })
+    );
 
-    localStorage.setItem("listapedidos:separacao-atual", JSON.stringify(data));
-    setTimeout(() => {
-      window.location.href = "/listapedidos/separacao/atual/";
-    }, 100);
+    window.location.href = "/listapedidos/separacao/atual/";
   }
 
   return (
@@ -177,8 +164,11 @@ export default function NovaSeparacaoPage() {
       <section className="import-card">
         <div className="upload-icon"><Upload size={30} /></div>
         <p className="eyebrow">ETAPA 1</p>
-        <h2>Importe a planilha do pedido</h2>
-        <p className="muted">O aplicativo procura a tabela de produtos e lê somente as colunas Quantidade, Código e Descrição do produto.</p>
+        <h2>Selecione a planilha</h2>
+        <p className="muted">
+          A planilha pode ter várias informações. O ListaPedidos vai procurar a tabela que contém
+          <strong> Quantidade, Código e Produto/Descrição do produto</strong> e usar somente essa parte.
+        </p>
 
         <label className="upload-button">
           <FileSpreadsheet size={20} />
@@ -186,7 +176,6 @@ export default function NovaSeparacaoPage() {
           <input type="file" accept=".xlsx,.xls,.csv" onChange={(e) => handleFile(e.target.files?.[0])} />
         </label>
         <small>Formatos aceitos: XLSX, XLS e CSV</small>
-
         {error && <div className="error-box">{error}</div>}
       </section>
 
@@ -194,35 +183,51 @@ export default function NovaSeparacaoPage() {
         <section className="preview-card">
           <div className="section-heading">
             <div>
-              <p className="eyebrow">ETAPA 2</p>
-              <h2>Conferir arquivo</h2>
+              <p className="eyebrow">ETAPA 2 — ÁREA SELECIONADA</p>
+              <h2>Confira a tabela que será usada</h2>
             </div>
             <CheckCircle2 className="success-icon" />
           </div>
 
           <div className="file-summary">
             <strong>{preview.fileName}</strong>
-            <span>{preview.totalRows} produtos encontrados</span>
+            <span>Aba: {preview.sheetName} · Linha do cabeçalho: {preview.headerRow + 1} · {preview.allRows.length} produtos</span>
+          </div>
+
+          <div className="notice">
+            <strong>Somente esta tabela será usada</strong>
+            <span>
+              Quantidade → coluna {preview.quantityCol + 1} · Código → coluna {preview.codeCol + 1} ·
+              Produto/Descrição → coluna {preview.productCol + 1}
+            </span>
           </div>
 
           <div className="table-wrap">
             <table>
-              <thead><tr>{preview.headers.map((header) => <th key={header}>{header}</th>)}</tr></thead>
+              <thead>
+                <tr><th>Quantidade</th><th>Código</th><th>Descrição do produto</th></tr>
+              </thead>
               <tbody>
-                {preview.rows.map((row, index) => (
-                  <tr key={index}>{preview.headers.map((header) => <td key={header}>{String(row[header] ?? "")}</td>)}</tr>
+                {preview.rows.map((row, i) => (
+                  <tr key={i}>
+                    <td>{cell(row[0])}</td>
+                    <td>{cell(row[1])}</td>
+                    <td>{cell(row[2])}</td>
+                  </tr>
                 ))}
               </tbody>
             </table>
           </div>
 
           <div className="notice">
-            <strong>Tabela identificada corretamente</strong>
-            <span>Serão importados todos os {preview.totalRows} produtos da tabela, não apenas os itens exibidos na prévia.</span>
+            <strong>Pronto para importar</strong>
+            <span>
+              A prévia mostra os primeiros {preview.rows.length} itens, mas a separação usará todos os {preview.allRows.length} itens encontrados nessa tabela.
+            </span>
           </div>
 
           <button className="primary-button full-width" type="button" onClick={createList} disabled={creating}>
-            {creating ? "Criando lista..." : "Criar lista de separação"}
+            {creating ? "Criando lista..." : "Usar esta tabela e criar separação"}
           </button>
         </section>
       )}
