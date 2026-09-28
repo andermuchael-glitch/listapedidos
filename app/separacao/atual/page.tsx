@@ -44,6 +44,21 @@ export default function SeparacaoAtualPage() {
     save({ ...data, items });
   }
 
+  function setQuantity(id: string, value: string) {
+    if (!data) return;
+    const parsed = value === "" ? 0 : Number(value);
+    if (!Number.isFinite(parsed)) return;
+
+    const item = data.items.find((current) => current.id === id);
+    if (!item) return;
+
+    const nextValue = Math.max(0, Math.min(item.quantidade, Math.floor(parsed)));
+    const items = data.items.map((current) =>
+      current.id === id ? { ...current, separado: nextValue } : current
+    );
+    save({ ...data, items });
+  }
+
   const visibleItems = useMemo(() => {
     if (!data) return [];
     const q = query.toLowerCase().trim();
@@ -126,7 +141,23 @@ export default function SeparacaoAtualPage() {
                 </div>
               </div>
               <div className="quantity-area">
-                <div><span>Separado</span><strong>{item.separado} / {item.quantidade}</strong></div>
+                <div className="quantity-value">
+                  <span>Separado</span>
+                  <div className="quantity-input-row">
+                    <input
+                      className="quantity-input"
+                      type="number"
+                      inputMode="numeric"
+                      min="0"
+                      max={item.quantidade}
+                      step="1"
+                      value={item.separado}
+                      onChange={(e) => setQuantity(item.id, e.target.value)}
+                      aria-label={`Quantidade separada de ${item.codigo}`}
+                    />
+                    <strong>/ {item.quantidade}</strong>
+                  </div>
+                </div>
                 <div className="quantity-controls">
                   <button onClick={() => changeQuantity(item.id, -1)} disabled={item.separado === 0} aria-label="Diminuir"><Minus size={17} /></button>
                   <button onClick={() => changeQuantity(item.id, 1)} disabled={complete} aria-label="Aumentar"><Plus size={17} /></button>
