@@ -1,0 +1,15 @@
+{
+  "name": "listapedidos-worker",
+  "private": true,
+  "version": "1.0.0",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "db:create": "wrangler d1 create listapedidos-db",
+    "db:migrate:local": "wrangler d1 migrations apply listapedidos-db --local",
+    "db:migrate:remote": "wrangler d1 migrations apply listapedidos-db --remote"
+  },
+  "devDependencies": {
+    "wrangler": "^4.44.0"
+  }
+}
