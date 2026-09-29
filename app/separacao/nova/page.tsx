@@ -245,6 +245,60 @@ async function extractPdfRows(file: File) {
   return { rows, numero, cliente };
 }
 
+function locateMatrixProductTable(matrix: SheetMatrix) {
+  // Modelo "matriz de pedidos": produto na primeira coluna, destinos/clientes
+  // nas colunas seguintes e uma coluna final "Total". Ex.: Canga | 0 | 100 | ... | 124.
+  // Nesse formato não existe uma coluna chamada Quantidade; a quantidade correta
+  // para a separação é o valor da coluna Total.
+  for (let r = 0; r < matrix.length; r++) {
+    const row = matrix[r] ?? [];
+    const totalCol = findColumn(row, ["Total"]);
+    if (totalCol <= 0) continue;
+
+    const productCol = 0;
+    const headerLooksLikeMatrix =
+      totalCol >= 2 &&
+      row.slice(1, totalCol).some((value) => cell(value));
+
+    if (!headerLooksLikeMatrix) continue;
+
+    const rows: SheetMatrix = [];
+    let itemNumber = 1;
+
+    for (let i = r + 1; i < matrix.length; i++) {
+      const line = matrix[i] ?? [];
+      const product = cell(line[productCol]);
+      const lineText = norm(line.map(cell).join(" "));
+
+      if (!product) continue;
+      if (/^(total|subtotal|totais)$/i.test(product) || /^total(?:\\s|$)/i.test(lineText)) break;
+
+      const quantity = numberValue(line[totalCol]);
+      if (quantity > 0) {
+        rows.push([
+          quantity,
+          `ITEM-${String(itemNumber).padStart(3, "0")}`,
+          product
+        ]);
+        itemNumber++;
+      }
+    }
+
+    if (rows.length) {
+      return {
+        headerRow: r,
+        quantityCol: totalCol,
+        codeCol: -1,
+        productCol,
+        rows,
+        launchRow: -1
+      };
+    }
+  }
+
+  return null;
+}
+
 function locateProductTables(matrix: SheetMatrix) {
   // Localiza TODAS as tabelas de produtos da aba. Não paramos na primeira.
   // Isso evita perder itens quando uma pasta possui várias abas ou mais de
@@ -396,7 +450,35 @@ export default function NovaSeparacaoPage() {
       }
 
       if (!allRows.length) {
-        throw new Error("Não encontrei nenhuma tabela com Quantidade e Descrição do produto.");
+        // Segundo formato de planilha: matriz com produtos na primeira coluna
+        // e uma coluna "Total" no final.
+        for (const file of files) {
+          if (file.name.toLowerCase().endsWith(".pdf")) continue;
+          const workbook = XLSX.read(await file.arrayBuffer(), { type: "array" });
+          for (const sheetName of workbook.SheetNames) {
+            const matrix = XLSX.utils.sheet_to_json<Cell[]>(workbook.Sheets[sheetName], {
+              header: 1,
+              defval: "",
+              raw: true
+            });
+            const table = locateMatrixProductTable(matrix);
+            if (table) {
+              allRows.push(...table.rows);
+              if (!firstSheet) {
+                firstSheet = sheetName;
+                firstHeader = table.headerRow;
+                firstQuantity = table.quantityCol;
+                firstCode = table.codeCol;
+                firstProduct = table.productCol;
+                firstLaunch = table.launchRow;
+              }
+            }
+          }
+        }
+      }
+
+      if (!allRows.length) {
+        throw new Error("Não encontrei nenhuma tabela de produtos reconhecível. Posso analisar este modelo e adaptar o leitor.");
       }
 
       // Remove apenas duplicatas idênticas. Itens com códigos diferentes ou
