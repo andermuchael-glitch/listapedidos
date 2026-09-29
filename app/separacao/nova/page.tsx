@@ -311,7 +311,8 @@ function locateProductTables(matrix: SheetMatrix) {
       }
 
       if (q > 0 && product) {
-        const finalCode = code && code !== "-" ? code : `ITEM-${String(itemNumber).padStart(3, "0")}`;
+        const validCode = code && !/^#(?:REF|VALUE|N\/A|NAME|DIV\/0|NUM|NULL)!?$/i.test(code) && code !== "-";
+        const finalCode = validCode ? code : `ITEM-${String(itemNumber).padStart(3, "0")}`;
         rows.push([q, finalCode, product]);
         itemNumber++;
       }
