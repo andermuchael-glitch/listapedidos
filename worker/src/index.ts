@@ -50,6 +50,23 @@ async function hash(value: string) {
   return Array.from(new Uint8Array(digest), (b) => b.toString(16).padStart(2, "0")).join("");
 }
 
+async function passwordHash(password: string, salt: string) {
+  const key = await crypto.subtle.importKey("raw", new TextEncoder().encode(password), "PBKDF2", false, ["deriveBits"]);
+  const bits = await crypto.subtle.deriveBits(
+    { name: "PBKDF2", salt: new TextEncoder().encode(salt), iterations: 100_000, hash: "SHA-256" },
+    key,
+    256
+  );
+  return `${salt}:${Array.from(new Uint8Array(bits), (b) => b.toString(16).padStart(2, "0")).join("")}`;
+}
+
+async function verifyPassword(password: string, stored: string) {
+  const [salt, expected] = String(stored || "").split(":");
+  if (!salt || !expected) return false;
+  const actual = await passwordHash(password, salt);
+  return actual === `${salt}:${expected}`;
+}
+
 function token() {
   const bytes = crypto.getRandomValues(new Uint8Array(32));
   return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
@@ -125,20 +142,36 @@ export default {
       return response(request, env, { ok: true, service: "listapedidos-api", database: "d1" });
     }
 
-    if (url.pathname === "/api/session" && request.method === "POST") {
-      const body = (await request.json()) as { email?: string; nome?: string };
+    if (url.pathname === "/api/auth/register" && request.method === "POST") {
+      const body = (await request.json()) as { email?: string; nome?: string; senha?: string };
       const email = String(body.email || "").trim().toLowerCase();
-      if (!email) return response(request, env, { error: "E-mail obrigatório." }, 400);
+      const senha = String(body.senha || "");
+      if (!email || senha.length < 8) {
+        return response(request, env, { error: "E-mail e senha com pelo menos 8 caracteres são obrigatórios." }, 400);
+      }
 
-      let user = await env.DB.prepare(
-        "SELECT id,nome,email FROM usuarios WHERE email = ?"
-      ).bind(email).first<{ id: string; nome: string; email: string }>();
+      const exists = await env.DB.prepare("SELECT id FROM usuarios WHERE email=?").bind(email).first();
+      if (exists) return response(request, env, { error: "Este e-mail já está cadastrado." }, 409);
 
-      if (!user) {
-        const id = crypto.randomUUID();
-        await env.DB.prepare("INSERT INTO usuarios (id,nome,email) VALUES (?,?,?)")
-          .bind(id, String(body.nome || ""), email).run();
-        user = { id, nome: String(body.nome || ""), email };
+      const id = crypto.randomUUID();
+      const salt = token();
+      const senhaHash = await passwordHash(senha, salt);
+      await env.DB.prepare("INSERT INTO usuarios (id,nome,email,senha_hash) VALUES (?,?,?,?)")
+        .bind(id, String(body.nome || ""), email, senhaHash).run();
+
+      return response(request, env, { ok: true, user: { id, nome: String(body.nome || ""), email } }, 201);
+    }
+
+    if (url.pathname === "/api/auth/login" && request.method === "POST") {
+      const body = (await request.json()) as { email?: string; senha?: string };
+      const email = String(body.email || "").trim().toLowerCase();
+      const senha = String(body.senha || "");
+      const user = await env.DB.prepare(
+        "SELECT id,nome,email,senha_hash FROM usuarios WHERE email=?"
+      ).bind(email).first<{ id: string; nome: string; email: string; senha_hash: string }>();
+
+      if (!user || !(await verifyPassword(senha, user.senha_hash))) {
+        return response(request, env, { error: "E-mail ou senha inválidos." }, 401);
       }
 
       const rawToken = token();
@@ -146,7 +179,7 @@ export default {
         "INSERT INTO sessoes (token_hash,usuario_id,expira_em) VALUES (?,?,datetime('now','+30 days'))"
       ).bind(await hash(rawToken), user.id).run();
 
-      return response(request, env, { ok: true, user }, 200, {
+      return response(request, env, { ok: true, user: { id: user.id, nome: user.nome, email: user.email } }, 200, {
         "set-cookie": `lp_session=${encodeURIComponent(rawToken)}; Path=/; Max-Age=2592000; HttpOnly; Secure; SameSite=None`
       });
     }
