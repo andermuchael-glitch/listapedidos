@@ -245,11 +245,20 @@ async function extractPdfRows(file: File) {
   return { rows, numero, cliente };
 }
 
-function locateProductTable(matrix: SheetMatrix) {
-  // A separação usa somente: QUANTIDADE, CÓDIGO e DESCRIÇÃO.
-  // Valores, subtotais, totais e demais informações comerciais são ignorados.
-  let launchRow = -1;
+function locateProductTables(matrix: SheetMatrix) {
+  // Localiza TODAS as tabelas de produtos da aba. Não paramos na primeira.
+  // Isso evita perder itens quando uma pasta possui várias abas ou mais de
+  // um bloco de lançamento.
+  const tables: Array<{
+    headerRow: number;
+    quantityCol: number;
+    codeCol: number;
+    productCol: number;
+    rows: SheetMatrix;
+    launchRow: number;
+  }> = [];
 
+  let launchRow = -1;
   for (let r = 0; r < matrix.length; r++) {
     const rowText = (matrix[r] ?? []).map(norm).join(" ");
     if (rowText.includes("lancamento de pedido")) {
@@ -258,7 +267,6 @@ function locateProductTable(matrix: SheetMatrix) {
     }
   }
 
-  // Se houver "LANÇAMENTO DE PEDIDO", ignoramos tudo que estiver acima.
   const firstRow = launchRow >= 0 ? launchRow + 1 : 0;
 
   for (let r = firstRow; r < matrix.length; r++) {
@@ -274,119 +282,149 @@ function locateProductTable(matrix: SheetMatrix) {
       "Produto/Descrição"
     ]);
 
-    // Código é opcional: algumas planilhas possuem apenas Quant + Descrição.
-    if (quantityCol >= 0 && productCol >= 0) {
-      const rows: SheetMatrix = [];
-      let itemNumber = 1;
+    if (quantityCol < 0 || productCol < 0) continue;
 
-      for (let i = r + 1; i < matrix.length; i++) {
-        const line = matrix[i] ?? [];
-        const q = numberValue(line[quantityCol]);
-        const code = codeCol >= 0 ? cell(line[codeCol]) : "";
-        const product = cell(line[productCol]);
-        const lineText = norm(line.map(cell).join(" "));
+    const rows: SheetMatrix = [];
+    let itemNumber = 1;
+    let emptyRows = 0;
 
-        // Linhas vazias encerram a tabela depois que já encontramos itens.
-        if (!q && !code && !product) {
-          if (rows.length) break;
-          continue;
-        }
+    for (let i = r + 1; i < matrix.length; i++) {
+      const line = matrix[i] ?? [];
+      const q = numberValue(line[quantityCol]);
+      const code = codeCol >= 0 ? cell(line[codeCol]) : "";
+      const product = cell(line[productCol]);
+      const lineText = norm(line.map(cell).join(" "));
 
-        // Totais/subtotais nunca entram na separação.
-        const isTotal = /(^|\s)(total|subtotal|sub-total|totais)(\s|$)/i.test(lineText);
-        if (isTotal) continue;
+      // Não encerramos ao primeiro espaço vazio. Algumas planilhas deixam
+      // linhas em branco entre blocos. Só paramos após várias linhas vazias.
+      if (!q && !code && !product) {
+        emptyRows++;
+        if (rows.length && emptyRows >= 5) break;
+        continue;
+      }
+      emptyRows = 0;
 
-        // Só entram produtos com quantidade e descrição.
-        if (q > 0 && product) {
-          const finalCode = code || `ITEM-${String(itemNumber).padStart(3, "0")}`;
-          rows.push([q, finalCode, product]);
-          itemNumber++;
-        }
+      const isTotal = /(^|\s)(total|subtotal|sub-total|totais)(\s|$)/i.test(lineText);
+      if (isTotal) {
+        // Um total encerra este bloco, mas não impede a procura de outra tabela.
+        break;
       }
 
-      if (rows.length) {
-        return {
-          headerRow: r,
-          quantityCol,
-          codeCol,
-          productCol,
-          rows,
-          launchRow
-        };
+      if (q > 0 && product) {
+        const finalCode = code && code !== "-" ? code : `ITEM-${String(itemNumber).padStart(3, "0")}`;
+        rows.push([q, finalCode, product]);
+        itemNumber++;
       }
+    }
+
+    if (rows.length) {
+      tables.push({ headerRow: r, quantityCol, codeCol, productCol, rows, launchRow });
+      // A próxima procura começa depois do bloco encontrado.
+      r += rows.length;
     }
   }
 
-  return null;
+  return tables;
 }
 
 export default function NovaSeparacaoPage() {
   const [preview, setPreview] = useState<Preview | null>(null);
+  const [selectedFiles, setSelectedFiles] = useState<string[]>([]);
   const [error, setError] = useState("");
   const [creating, setCreating] = useState(false);
 
-  async function handleFile(file?: File) {
-    if (!file) return;
+  async function handleFiles(fileList?: FileList | null) {
+    if (!fileList?.length) return;
     setError("");
     setPreview(null);
 
     try {
-      const isPdf = file.name.toLowerCase().endsWith(".pdf");
+      const files = Array.from(fileList);
+      const allRows: SheetMatrix = [];
+      let firstSheet = "";
+      let firstHeader = -1;
+      let firstQuantity = 0;
+      let firstCode = 1;
+      let firstProduct = 2;
+      let firstLaunch = -1;
+      let numero = "";
+      let cliente = "";
+      let pdfOnly = true;
+      const sources: string[] = [];
 
-      if (isPdf) {
-        const pdfResult = await extractPdfRows(file);
-        setPreview({
-          fileName: file.name,
-          numero: pdfResult.numero,
-          cliente: pdfResult.cliente,
+      for (const file of files) {
+        const isPdf = file.name.toLowerCase().endsWith(".pdf");
+        pdfOnly = pdfOnly && isPdf;
 
-          sheetName: "PDF",
-          headerRow: -1,
-          quantityCol: 0,
-          codeCol: 1,
-          productCol: 2,
-          launchRow: -1,
-          rows: pdfResult.rows.slice(0, 8),
-          allRows: pdfResult.rows
-        });
-        return;
-      }
-
-      const workbook = XLSX.read(await file.arrayBuffer(), { type: "array" });
-      let found: ReturnType<typeof locateProductTable> = null;
-      let foundSheet = "";
-
-      for (const sheetName of workbook.SheetNames) {
-        const sheet = workbook.Sheets[sheetName];
-        const matrix = XLSX.utils.sheet_to_json<Cell[]>(sheet, {
-          header: 1,
-          defval: "",
-          raw: true
-        });
-        found = locateProductTable(matrix);
-        if (found) {
-          foundSheet = sheetName;
-          break;
+        if (isPdf) {
+          const pdfResult = await extractPdfRows(file);
+          allRows.push(...pdfResult.rows);
+          numero ||= pdfResult.numero;
+          cliente ||= pdfResult.cliente;
+          sources.push(file.name);
+          continue;
         }
+
+        const workbook = XLSX.read(await file.arrayBuffer(), { type: "array" });
+        let fileFound = 0;
+
+        for (const sheetName of workbook.SheetNames) {
+          const sheet = workbook.Sheets[sheetName];
+          const matrix = XLSX.utils.sheet_to_json<Cell[]>(sheet, {
+            header: 1,
+            defval: "",
+            raw: true
+          });
+
+          const tables = locateProductTables(matrix);
+          for (const table of tables) {
+            allRows.push(...table.rows);
+            fileFound += table.rows.length;
+            if (!firstSheet) {
+              firstSheet = sheetName;
+              firstHeader = table.headerRow;
+              firstQuantity = table.quantityCol;
+              firstCode = table.codeCol;
+              firstProduct = table.productCol;
+              firstLaunch = table.launchRow;
+            }
+          }
+        }
+
+        if (fileFound) sources.push(`${file.name} (${fileFound} itens)`);
       }
 
-      if (!found) {
-        throw new Error("Não encontrei uma tabela com Quantidade e Descrição do produto.");
+      if (!allRows.length) {
+        throw new Error("Não encontrei nenhuma tabela com Quantidade e Descrição do produto.");
       }
 
+      // Remove apenas duplicatas idênticas. Itens com códigos diferentes ou
+      // quantidades diferentes continuam sendo preservados.
+      const uniqueRows: SheetMatrix = [];
+      const seen = new Set<string>();
+      for (const row of allRows) {
+        const key = [row[0], norm(row[1]), norm(row[2])].join("|");
+        if (seen.has(key)) continue;
+        seen.add(key);
+        uniqueRows.push(row);
+      }
+
+      setSelectedFiles(sources);
       setPreview({
-        fileName: file.name,
-        sheetName: foundSheet,
-        headerRow: found.headerRow,
-        quantityCol: found.quantityCol,
-        codeCol: found.codeCol,
-        productCol: found.productCol,
-        launchRow: found.launchRow,
-        rows: found.rows.slice(0, 8),
-        allRows: found.rows
+        fileName: files.length === 1 ? files[0].name : `${files.length} arquivos selecionados`,
+        numero,
+        cliente,
+        sheetName: pdfOnly ? "PDF" : (firstSheet || "Várias abas"),
+        headerRow: firstHeader,
+        quantityCol: firstQuantity,
+        codeCol: firstCode,
+        productCol: firstProduct,
+        launchRow: firstLaunch,
+        rows: uniqueRows.slice(0, 8),
+        allRows: uniqueRows
       });
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Não foi possível ler o arquivo.");
+      setError(e instanceof Error ? e.message : "Não foi possível ler os arquivos.");
     }
   }
 
@@ -459,9 +497,9 @@ export default function NovaSeparacaoPage() {
         <label className="upload-button">
           {preview?.fileName.toLowerCase().endsWith(".pdf") ? <FileText size={20} /> : <FileSpreadsheet size={20} />}
           Selecionar arquivo
-          <input type="file" accept=".xlsx,.xls,.csv,.pdf" onChange={(e) => handleFile(e.target.files?.[0])} />
+          <input type="file" multiple accept=".xlsx,.xls,.csv,.pdf" onChange={(e) => handleFiles(e.target.files)} />
         </label>
-        <small>Formatos aceitos: XLSX, XLS, CSV e PDF (orçamento)</small>
+        <small>Você pode selecionar um ou vários arquivos. Formatos: XLSX, XLS, CSV e PDF.</small>
         {error && <div className="error-box">{error}</div>}
       </section>
 
@@ -478,9 +516,12 @@ export default function NovaSeparacaoPage() {
           <div className="file-summary">
             <strong>{preview.fileName}</strong>
             <span>
+              {selectedFiles.length > 0 && selectedFiles.length <= 6
+                ? `Fontes: ${selectedFiles.join(" · ")} · `
+                : ""}
               {preview.sheetName === "PDF"
                 ? `Orçamento PDF · ${preview.allRows.length} produtos encontrados`
-                : `Aba: ${preview.sheetName} · Área: LANÇAMENTO DE PEDIDO · Cabeçalho: linha ${preview.headerRow + 1} · ${preview.allRows.length} produtos`}
+                : `Todas as abas/blocos encontrados · ${preview.allRows.length} produtos`}
             </span>
           </div>
 
