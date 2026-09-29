@@ -27,7 +27,7 @@ O Worker terá uma URL semelhante a `https://listapedidos-api.<conta>.workers.de
 
 O navegador nunca recebe credenciais do D1. A API usa sessão em cookie HttpOnly/Secure e o D1 fica somente no Worker.
 
-A sessão do MVP é criada a partir do e-mail informado. Não há senha nessa primeira etapa; a autenticação completa pode ser adicionada depois sem trocar o banco.
+A autenticação inicial usa cadastro/login por e-mail e senha. A senha é armazenada como hash PBKDF2; o navegador recebe apenas uma sessão HttpOnly/Secure.
 
 ## Frontend
 
