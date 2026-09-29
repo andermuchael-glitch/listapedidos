@@ -1,0 +1,12 @@
+name = "listapedidos-api"
+main = "src/index.ts"
+compatibility_date = "2026-09-29"
+
+[vars]
+ALLOWED_ORIGIN = "https://andermuchael-glitch.github.io"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "listapedidos-db"
+database_id = "COLOQUE-SEU-DATABASE-ID-AQUI"
+migrations_dir = "migrations"
