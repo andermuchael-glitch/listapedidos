@@ -24,6 +24,7 @@ export type ApiOrder = {
   status: string;
   totalItens: number;
   totalUnidades: number;
+  totalSeparado?: number;
   criadoEm?: string;
   atualizadoEm?: string;
   items?: ApiItem[];
