@@ -3,10 +3,51 @@
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { ArrowLeft, Check, Minus, Plus, Search } from "lucide-react";
-import { getOrder, listOrders, updateItemSeparated } from "../../../lib/api";
+import { getOrder, listOrders, saveOrder, updateItemSeparated } from "../../../lib/api";
 
 type Item = { id: string; codigo: string; descricao: string; quantidade: number; separado: number };
-type Separation = { id: string; fileName: string; numero: string; cliente: string; items: Item[]; createdAt: string; status?: string; finishedAt?: string };
+type Separation = { id: string; fileName: string; numero: string; cliente: string; items: Item[]; createdAt: string; status?: string; finishedAt?: string };\ntype PendingSync = { orderId: string; itemId: string; separado: number };\nconst PENDING_SYNC_KEY = "listapedidos:sync-pendente";
+
+function readPendingSync(): PendingSync[] {
+  try {
+    const value = JSON.parse(localStorage.getItem(PENDING_SYNC_KEY) || "[]");
+    return Array.isArray(value) ? value : [];
+  } catch {
+    return [];
+  }
+}
+
+function writePendingSync(value: PendingSync[]) {
+  localStorage.setItem(PENDING_SYNC_KEY, JSON.stringify(value));
+}
+
+function queuePendingSync(entry: PendingSync) {
+  const pending = readPendingSync().filter(
+    (item) => !(item.orderId === entry.orderId && item.itemId === entry.itemId)
+  );
+  pending.push(entry);
+  writePendingSync(pending);
+}
+
+function removePendingSync(orderId: string, itemId: string) {
+  writePendingSync(
+    readPendingSync().filter(
+      (item) => !(item.orderId === orderId && item.itemId === itemId)
+    )
+  );
+}
+
+async function retryPendingSync(orderId: string) {
+  const pending = readPendingSync().filter((item) => item.orderId === orderId);
+  for (const item of pending) {
+    try {
+      await updateItemSeparated(item.orderId, item.itemId, item.separado);
+      removePendingSync(item.orderId, item.itemId);
+    } catch {
+      // Continua tentando os demais itens. Os que falharem permanecem na fila.
+    }
+  }
+}
 
 export default function SeparacaoAtualPage() {
   const [data, setData] = useState<Separation | null>(null);
@@ -48,6 +89,31 @@ export default function SeparacaoAtualPage() {
             };
             setData(merged);
             localStorage.setItem("listapedidos:separacao-atual", JSON.stringify(merged));
+            await retryPendingSync(merged.id);
+            try {
+              const refreshed = await getOrder(merged.id);
+              const synced: Separation = {
+                id: refreshed.id,
+                fileName: refreshed.arquivoNome,
+                numero: refreshed.numero || "",
+                cliente: refreshed.cliente || "",
+                items: refreshed.items.map((item) => ({
+                  id: String(item.id),
+                  codigo: item.codigo,
+                  descricao: item.descricao,
+                  quantidade: Number(item.quantidade) || 0,
+                  separado: Number(item.separado) || 0
+                })),
+                createdAt: refreshed.criadoEm || merged.createdAt,
+                status: refreshed.status
+              };
+              if (!cancelled) {
+                setData(synced);
+                localStorage.setItem("listapedidos:separacao-atual", JSON.stringify(synced));
+              }
+            } catch {
+              // A primeira leitura já é válida; mantém o estado local/cloud disponível.
+            }
           }
           return;
         }
@@ -114,8 +180,12 @@ export default function SeparacaoAtualPage() {
   function syncItem(id: string, separado: number) {
     if (!data) return;
     updateItemSeparated(data.id, id, separado)
-      .then(() => setSyncError(""))
+      .then(() => {
+        removePendingSync(data.id, id);
+        setSyncError("");
+      })
       .catch((error) => {
+        queuePendingSync({ orderId: data.id, itemId: id, separado });
         setSyncError(error instanceof Error ? error.message : "Não foi possível sincronizar com a nuvem.");
       });
   }
@@ -264,15 +334,29 @@ export default function SeparacaoAtualPage() {
       {progress === 100 && (
         <section className="finish-card">
           <div><strong>Separação completa</strong><span>Todos os {total} itens foram separados.</span></div>
-          <button className="primary-button" onClick={() => {
+          <button className="primary-button" onClick={async () => {
             const finished = { ...data, finishedAt: new Date().toISOString(), status: "concluida" };
-            const history = JSON.parse(localStorage.getItem("listapedidos:historico") || "[]");
-            const withoutCurrent = history.filter((entry: Separation) => entry.id !== finished.id);
-            withoutCurrent.unshift(finished);
-            localStorage.setItem("listapedidos:historico", JSON.stringify(withoutCurrent.slice(0, 100)));
-            localStorage.setItem("listapedidos:separacao-concluida", JSON.stringify(finished));
-            localStorage.setItem("listapedidos:separacao-atual", JSON.stringify(finished));
-            alert("Separação finalizada e salva no histórico.");
+            try {
+              await saveOrder({
+                id: finished.id,
+                numero: finished.numero,
+                cliente: finished.cliente,
+                arquivoNome: finished.fileName,
+                status: "concluida",
+                items: finished.items
+              });
+              const history = JSON.parse(localStorage.getItem("listapedidos:historico") || "[]");
+              const withoutCurrent = history.filter((entry: Separation) => entry.id !== finished.id);
+              withoutCurrent.unshift(finished);
+              localStorage.setItem("listapedidos:historico", JSON.stringify(withoutCurrent.slice(0, 100)));
+              localStorage.setItem("listapedidos:separacao-concluida", JSON.stringify(finished));
+              localStorage.setItem("listapedidos:separacao-atual", JSON.stringify(finished));
+              setData(finished);
+              setSyncError("");
+              alert("Separação finalizada e salva no histórico e na nuvem.");
+            } catch (error) {
+              setSyncError(error instanceof Error ? error.message : "Não foi possível finalizar na nuvem.");
+            }
           }}>Finalizar</button>
         </section>
       )}
