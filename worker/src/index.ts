@@ -40,10 +40,17 @@ function response(
     "access-control-allow-credentials": "true",
     "access-control-allow-headers": "content-type",
     "access-control-allow-methods": "GET,POST,PATCH,DELETE,OPTIONS",
-    "cache-control": "no-store"
+    "cache-control": "no-store",
+    "vary": "Origin"
   });
 
   Object.entries(extra).forEach(([k, v]) => headers.set(k, String(v)));
+
+  if (status === 204) {
+    headers.delete("content-type");
+    return new Response(null, { status, headers });
+  }
+
   return new Response(JSON.stringify(data), { status, headers });
 }
 
