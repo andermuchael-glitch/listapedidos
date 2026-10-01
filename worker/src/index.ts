@@ -499,6 +499,16 @@ export default {
         return response(request, env, result.results);
       }
 
+      if (url.pathname === "/api/pedidos" && request.method === "DELETE") {
+        await env.DB.prepare(
+          "DELETE FROM pedidos WHERE usuario_id=?"
+        )
+          .bind(uid)
+          .run();
+
+        return response(request, env, { ok: true });
+      }
+
       if (url.pathname === "/api/pedidos" && request.method === "POST") {
         return syncOrder(request, env, uid);
       }
