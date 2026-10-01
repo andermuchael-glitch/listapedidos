@@ -504,7 +504,7 @@ export default {
       }
 
       const orderDeleteMatch = url.pathname.match(
-        /^\\/api\\/pedidos\\/([^/]+)$/
+        /^\/api\/pedidos\/([^/]+)$/
       );
 
       if (orderDeleteMatch && request.method === "DELETE") {
