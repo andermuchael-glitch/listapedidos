@@ -22,7 +22,12 @@ type Preview = {
 };
 
 const norm = (v: unknown) =>
-  String(v ?? "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim();
+  String(v ?? "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/\s+/g, " ")
+    .trim();
 
 const cell = (v: unknown) => String(v ?? "").trim();
 
@@ -259,10 +264,10 @@ function extractSpreadsheetOrderNumber(matrix: SheetMatrix) {
     for (let col = 0; col < row.length; col++) {
       const label = norm(row[col]);
       if (!label.includes("venda") || !label.includes("n")) continue;
-      const sameCell = cell(row[col]).match(/(?:venda|pedido)\\s*(?:n[ºo]?|numero)?\\s*[:#-]?\\s*(\\d{3,})/i);
+      const sameCell = cell(row[col]).match(/(?:venda|pedido)\s*(?:n[ºo]?|numero)?\s*[:#-]?\s*(\d{3,})/i);
       if (sameCell) return sameCell[1];
       for (let next = col + 1; next < row.length; next++) {
-        const value = cell(row[next]).match(/\\d{3,}/);
+        const value = cell(row[next]).match(/\d{3,}/);
         if (value) return value[0];
       }
     }
@@ -282,10 +287,16 @@ function locateLaunchProductTable(matrix: SheetMatrix) {
       break;
     }
   }
-  if (launchRow < 0) return null;
 
-  const headerStart = launchRow + 1;
-  for (let r = headerStart; r < Math.min(matrix.length, headerStart + 8); r++) {
+  // Mesmo que a planilha não tenha a faixa "LANÇAMENTO DE PEDIDO",
+  // procuramos a tabela pelos cabeçalhos. Isso deixa o leitor tolerante
+  // a modelos equivalentes e a células mescladas.
+  const headerStart = launchRow >= 0 ? launchRow + 1 : 0;
+  const headerEnd = launchRow >= 0
+    ? Math.min(matrix.length, headerStart + 15)
+    : matrix.length;
+
+  for (let r = headerStart; r < headerEnd; r++) {
     const row = matrix[r] ?? [];
     const quantityCol = row.findIndex((v) => norm(v) === "quantidade" || norm(v) === "quant" || norm(v) === "qtd" || norm(v) === "qtde");
     const codeCol = row.findIndex((v) => ["codigo", "cod", "sku", "referencia"].includes(norm(v)));
