@@ -122,6 +122,13 @@ export async function saveOrder(order: {
   });
 }
 
+export async function deleteOrder(id: string) {
+  return request<{ ok: boolean; id: string }>(
+    `/api/pedidos/${encodeURIComponent(id)}`,
+    { method: "DELETE" }
+  );
+}
+
 export async function updateItemSeparated(
   orderId: string,
   itemId: string,
