@@ -45,9 +45,11 @@ function findColumn(row: Cell[], names: string[]) {
 }
 
 async function extractPdfRows(file: File) {
-  // Orçamentos deste modelo usam colunas:
-  // Qt. | Produto/Serviço | Detalhe do item | Valor unitário | Subtotal.
-  // Para a separação usamos somente Qt. + Código + Descrição.
+  // Modelo de orçamento com distribuição por modelo:
+  // # | Código | Produto | Qtde.
+  // A linha seguinte contém os códigos/modelos (ex.: 1057 127 175...)
+  // e a próxima linha contém a quantidade de cada modelo (ex.: 6 6 6...).
+  // Para a separação, cada par código + quantidade vira um item independente.
   const pdfjs = await import("pdfjs-dist/legacy/build/pdf.js");
 
   pdfjs.GlobalWorkerOptions.workerSrc =
@@ -64,9 +66,9 @@ async function extractPdfRows(file: File) {
 
   for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber++) {
     const page = await pdf.getPage(pageNumber);
-    const content = await page.getTextContent();
+    const pageContent = await page.getTextContent();
 
-    const items = (content.items as unknown[])
+    const items = (pageContent.items as unknown[])
       .filter((item): item is PdfTextItem => {
         if (typeof item !== "object" || item === null) return false;
         const candidate = item as { str?: unknown; transform?: unknown };
@@ -91,7 +93,7 @@ async function extractPdfRows(file: File) {
 
     for (const item of items) {
       const line = visualLines.find(
-        (current) => Math.abs(current.y - item.y) <= 2
+        (currentLine) => Math.abs(currentLine.y - item.y) <= 2
       );
 
       if (line) {
@@ -105,140 +107,105 @@ async function extractPdfRows(file: File) {
   visualLines.forEach((line) => line.items.sort((a, b) => a.x - b.x));
 
   const rows: SheetMatrix = [];
-  let current: { q: number; code: string; description: string } | null = null;
   let numero = "";
   let cliente = "";
 
-  const finishCurrent = () => {
-    if (!current) return;
+  const normalizedLines = visualLines.map((line) =>
+    line.items.map((item) => item.text).filter(Boolean)
+  );
 
-    const description = current.description
-      .replace(/\s+/g, " ")
-      .replace(/^[ -]+|[ -]+$/g, "")
-      .trim();
-
-    if (current.q > 0 && description) {
-      rows.push([
-        current.q,
-        current.code || `ITEM-${String(rows.length + 1).padStart(3, "0")}`,
-        description
-      ]);
-    }
-
-    current = null;
-  };
-
-  const isMoney = (text: string) =>
-    /^-?\d{1,3}(?:[.]\d{3})*,\d{2}$/.test(text) ||
-    /^-?\d+,\d{2}$/.test(text);
-
-  const isPageOrFooter = (line: string) =>
-    /produto\/servi[cç]o|detalhe do item|valor unit[aá]rio|subtotal/i.test(line) ||
-    /continua na pr[oó]xima p[aá]gina|p[aá]gina\s+\d+\s+de\s+\d+/i.test(line) ||
-    /^valor l[ií]quido|^total(?:\s|$)|^condi[cç][aã]o de pagamento|^forma de pagamento|^n[ºo]\s+vencimento/i.test(line);
-
-  let productSectionEnded = false;
-
-  for (const line of visualLines) {
-    const parts = line.items.map((item) => item.text).filter(Boolean);
+  // Nome Fantasia é a identificação comercial que deve aparecer como cliente.
+  for (const parts of normalizedLines) {
     const textLine = parts.join(" ").replace(/\s+/g, " ").trim();
-
-    if (!textLine || productSectionEnded) continue;
-
-    // Metadados do pedido ficam no cabeçalho do PDF.
-    const vendaMatch = textLine.match(/\bVenda\s+(\d+)\b/i);
-    if (vendaMatch && !numero) numero = vendaMatch[1];
-
-    if (!cliente) {
-      // O nome do cliente é a linha que começa com "GIGANTE DA COLINA".
-      // Ignoramos telefone, CNPJ e demais dados comerciais do cabeçalho.
-      const clienteMatch = textLine.match(/^(GIGANTE DA COLINA(?:\s*-\s*[^0-9]+)?)/i);
-      if (clienteMatch) cliente = clienteMatch[1].replace(/\s+/g, " ").trim();
-      else if (/^GIGANTE DA COLINA$/i.test(textLine)) cliente = "GIGANTE DA COLINA";
-    }
-
-    // Depois de "Total", "Valor líquido" ou "Condição de pagamento",
-    // não existem mais produtos. O que vem abaixo são parcelas/pagamento
-    // e nunca deve entrar na separação.
-    if (/^total(?:\s|$)/i.test(textLine) ||
-        /^valor\s+l[ií]quido/i.test(textLine) ||
-        /^condi[cç][aã]o\s+de\s+pagamento/i.test(textLine) ||
-        /^forma\s+de\s+pagamento/i.test(textLine)) {
-      finishCurrent();
-      productSectionEnded = true;
-      continue;
-    }
-
-    if (isPageOrFooter(textLine)) continue;
-
-    // A linha de produto começa com a quantidade na primeira coluna.
-    // O restante pode conter duas colunas de texto e, no final, dois valores.
-    const first = parts[0];
-    const qMatch = first.match(/^(\d+)$/);
-
-    if (qMatch) {
-      const q = Number(qMatch[1]);
-
-      if (Number.isFinite(q) && q > 0) {
-        finishCurrent();
-
-        const textParts = parts
-          .slice(1)
-          .filter((part) => !isMoney(part));
-
-        // Neste modelo a primeira coluna textual é "Produto/Serviço",
-        // por exemplo: "CTF MOD 27 - VASCO - CARTEIRA".
-        // O código é a parte até " - VASCO"; a descrição vem do
-        // "Detalhe do item" e, se necessário, do restante da linha.
-        const productService = textParts[0] || "";
-        const detailParts = textParts.slice(1);
-
-        const codeMatch = productService.match(
-          /^([A-Za-z0-9]+(?:\s+MOD\s+\d+)?(?:\s*-\s*[A-Za-z0-9]+)?)\s*-\s*(.+)$/i
-        );
-
-        let code = "";
-        let shortDescription = productService;
-
-        if (codeMatch) {
-          code = codeMatch[1].trim();
-          shortDescription = codeMatch[2].trim();
-        }
-
-        const detail = detailParts.join(" ").trim();
-
-        // Preferimos o detalhe, pois é a descrição completa do item.
-        // Se o PDF não tiver detalhe separado, usamos o texto da coluna
-        // Produto/Serviço depois do código.
-        const description = detail || shortDescription;
-
-        current = {
-          q,
-          code,
-          description
-        };
-        continue;
-      }
-    }
-
-    // Linhas seguintes sem quantidade são continuação da descrição.
-    if (current) {
-      const continuation = parts
-        .filter((part) => !isMoney(part))
-        .join(" ")
-        .trim();
-
-      if (continuation && !isPageOrFooter(continuation)) {
-        current.description += ` ${continuation}`;
-      }
+    const fantasiaMatch = textLine.match(/^Nome\s+Fantasia\s*:\s*(.+)$/i);
+    if (fantasiaMatch) {
+      cliente = fantasiaMatch[1].trim();
+      break;
     }
   }
 
-  finishCurrent();
+  // Só tratamos "Venda 12345" como número de pedido.
+  // "Orçamento Nº ..." não é convertido automaticamente em pedido.
+  for (const parts of normalizedLines) {
+    const textLine = parts.join(" ").replace(/\s+/g, " ").trim();
+    const vendaMatch = textLine.match(/\bVenda\s+(?:N[ºo]\s*)?(\d+)\b/i);
+    if (vendaMatch) {
+      numero = vendaMatch[1];
+      break;
+    }
+  }
+
+  const isNumberToken = (value: string) => /^\d+$/.test(value.trim());
+
+  // Localiza blocos pela sequência visual:
+  // linha do produto -> linha dos códigos/modelos -> linha das quantidades.
+  for (let i = 0; i < normalizedLines.length; i++) {
+    const parts = normalizedLines[i];
+    const textLine = parts.join(" ").replace(/\s+/g, " ").trim();
+
+    if (!textLine) continue;
+
+    // Cabeçalho/fim da tabela.
+    if (/^#\s+Código\s+Produto\s+Qtde/i.test(textLine)) continue;
+    if (/^Qtde\.\s+Total:/i.test(textLine)) break;
+    if (/^Valor\s+total:/i.test(textLine)) break;
+    if (/^Condição\s+de\s+Pagamento:/i.test(textLine)) break;
+    if (/^Forma\s+de\s+Pagamento:/i.test(textLine)) break;
+
+    // Produto principal: número do item, nome do produto e quantidade total.
+    // Ex.: "1 MOEDEIRO 54"
+    const productMatch = textLine.match(/^(\d+)\s+(.+?)\s+(\d+)$/);
+    if (!productMatch) continue;
+
+    const productName = productMatch[2].trim();
+    const totalQuantity = Number(productMatch[3]);
+
+    if (!productName || !Number.isFinite(totalQuantity) || totalQuantity <= 0) {
+      continue;
+    }
+
+    const codeParts = normalizedLines[i + 1] ?? [];
+    const quantityParts = normalizedLines[i + 2] ?? [];
+
+    const codes = codeParts.filter(isNumberToken);
+    const quantities = quantityParts
+      .filter(isNumberToken)
+      .map((value) => Number(value));
+
+    if (!codes.length || codes.length !== quantities.length) continue;
+
+    const distributedTotal = quantities.reduce((sum, value) => sum + value, 0);
+
+    // A distribuição deve bater com a Qtde. do produto.
+    // Se houver diferença, ainda usamos os pares encontrados, mas não
+    // inventamos quantidade nem agrupamos os modelos.
+    if (distributedTotal !== totalQuantity) {
+      console.warn(
+        "Distribuição diferente do total para " +
+          productName +
+          ": " +
+          distributedTotal +
+          " != " +
+          totalQuantity
+      );
+    }
+
+    for (let modelIndex = 0; modelIndex < codes.length; modelIndex++) {
+      const quantity = quantities[modelIndex];
+      const code = codes[modelIndex];
+
+      if (quantity <= 0) continue;
+
+      rows.push([quantity, code, productName]);
+    }
+
+    // Pula as duas linhas já consumidas.
+    i += 2;
+  }
 
   if (!rows.length) {
     throw new Error(
-      "Não encontrei produtos no orçamento PDF. O PDF precisa conter quantidade, produto/serviço e descrição."
+      "Não encontrei a distribuição por modelos neste orçamento PDF. O modelo esperado possui produto/quantidade e, logo abaixo, códigos e quantidades de cada modelo."
     );
   }
 
@@ -386,7 +353,7 @@ export default function NovaSeparacaoPage() {
   const [preview, setPreview] = useState<Preview | null>(null);
   const [selectedFiles, setSelectedFiles] = useState<string[]>([]);
   const [error, setError] = useState("");
-  const [creating, setCreating] = useState(false);
+  const [creating, setCreating] = useState(false);\n  const [manualNumero, setManualNumero] = useState("");
 
   async function handleFiles(fileList?: FileList | null) {
     if (!fileList?.length) return;
@@ -547,7 +514,7 @@ export default function NovaSeparacaoPage() {
         id: `sep-${Date.now()}`,
         fileName: preview.fileName,
         sheetName: preview.sheetName,
-        numero: preview.numero || "",
+        numero: manualNumero.trim() || preview.numero || "",
         cliente: preview.cliente || "",
         items,
         totalRows: items.length,
@@ -616,6 +583,30 @@ export default function NovaSeparacaoPage() {
             </span>
           </div>
 
+          {!preview.numero && (
+            <div className="notice">
+              <strong>Número do pedido</strong>
+              <span>Este arquivo não possui um número de pedido identificado. Informe-o manualmente antes de usar a tabela.</span>
+              <input
+                className="quantity-input"
+                style={{ width: "180px", marginTop: "8px", textAlign: "left" }}
+                type="text"
+                inputMode="numeric"
+                value={manualNumero}
+                onChange={(e) => setManualNumero(e.target.value)}
+                placeholder="Ex.: 11239"
+                aria-label="Número do pedido"
+              />
+            </div>
+          )}
+
+          {preview.sheetName === "PDF" && preview.cliente && (
+            <div className="notice">
+              <strong>Nome fantasia identificado</strong>
+              <span>{preview.cliente}</span>
+            </div>
+          )}
+
           <div className="table-wrap">
             <table>
               <thead>
@@ -640,8 +631,8 @@ export default function NovaSeparacaoPage() {
             </span>
           </div>
 
-          <button className="primary-button full-width" type="button" onClick={createList} disabled={creating}>
-            {creating ? "Criando lista..." : "Usar esta tabela e criar separação"}
+          <button className="primary-button full-width" type="button" onClick={createList} disabled={creating || !manualNumero.trim()}>
+            {creating ? "Criando lista..." : !manualNumero.trim() ? "Informe o número do pedido" : "Usar esta tabela e criar separação"}
           </button>
         </section>
       )}
