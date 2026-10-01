@@ -253,6 +253,73 @@ async function extractPdfRows(file: File) {
   return { rows, numero, cliente };
 }
 
+function locateLaunchProductTable(matrix: SheetMatrix) {
+  // Modelo ListaPedidos com a área "LANÇAMENTO DE PEDIDO".
+  // Usa os cabeçalhos exatos da tabela para não confundir "Subtotal"
+  // com "Total" e para respeitar colunas vazias/mescladas.
+  let launchRow = -1;
+  for (let r = 0; r < matrix.length; r++) {
+    const text = (matrix[r] ?? []).map(norm).join(" ");
+    if (text.includes("lancamento de pedido")) {
+      launchRow = r;
+      break;
+    }
+  }
+  if (launchRow < 0) return null;
+
+  const headerStart = launchRow + 1;
+  for (let r = headerStart; r < Math.min(matrix.length, headerStart + 8); r++) {
+    const row = matrix[r] ?? [];
+    const quantityCol = row.findIndex((v) => norm(v) === "quantidade" || norm(v) === "quant" || norm(v) === "qtd" || norm(v) === "qtde");
+    const codeCol = row.findIndex((v) => ["codigo", "cod", "sku", "referencia"].includes(norm(v)));
+    const productCol = row.findIndex((v) => ["descricao do produto", "produto", "descricao", "produto/descricao"].includes(norm(v)));
+
+    if (quantityCol < 0 || productCol < 0) continue;
+
+    const rows: SheetMatrix = [];
+    let itemNumber = 1;
+
+    for (let i = r + 1; i < matrix.length; i++) {
+      const line = matrix[i] ?? [];
+      const lineText = norm(line.map(cell).join(" "));
+      const product = cell(line[productCol]);
+      const quantity = numberValue(line[quantityCol]);
+      const code = codeCol >= 0 ? cell(line[codeCol]) : "";
+
+      if (/^(total|totais|subtotal|valor total|valor liquido|condicao de pagamento|forma de pagamento)$/i.test(lineText)) break;
+
+      // Linhas vazias/modelos não viram itens.
+      if (!product && !code && !quantity) continue;
+
+      if (quantity > 0 && product) {
+        const validCode =
+          code &&
+          !/^#(?:REF|VALUE|N\/A|NAME|DIV\/0|NUM|NULL)!?$/i.test(code) &&
+          code !== "-";
+        rows.push([
+          quantity,
+          validCode ? code : `ITEM-${String(itemNumber).padStart(3, "0")}`,
+          product
+        ]);
+        itemNumber++;
+      }
+    }
+
+    if (rows.length) {
+      return {
+        headerRow: r,
+        quantityCol,
+        codeCol,
+        productCol,
+        rows,
+        launchRow
+      };
+    }
+  }
+
+  return null;
+}
+
 function locateMatrixProductTable(matrix: SheetMatrix) {
   // Modelo "matriz de pedidos": produto na primeira coluna, destinos/clientes
   // nas colunas seguintes e uma coluna final "Total". Ex.: Canga | 0 | 100 | ... | 124.
@@ -260,7 +327,7 @@ function locateMatrixProductTable(matrix: SheetMatrix) {
   // para a separação é o valor da coluna Total.
   for (let r = 0; r < matrix.length; r++) {
     const row = matrix[r] ?? [];
-    const totalCol = findColumn(row, ["Total"]);
+    const totalCol = row.findIndex((v) => norm(v) === "total");
     if (totalCol <= 0) continue;
 
     const productCol = 0;
@@ -440,7 +507,8 @@ export default function NovaSeparacaoPage() {
             raw: true
           });
 
-          const tables = locateProductTables(matrix);
+          const launchTable = locateLaunchProductTable(matrix);
+          const tables = launchTable ? [launchTable] : locateProductTables(matrix);
           for (const table of tables) {
             allRows.push(...table.rows);
             fileFound += table.rows.length;
