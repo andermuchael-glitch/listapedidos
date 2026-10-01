@@ -90,15 +90,20 @@ export default function SeparacaoAtualPage() {
   }, []);
 
   function save(next: Separation) {
-    setData(next);
-    localStorage.setItem("listapedidos:separacao-atual", JSON.stringify(next));
+    const total = next.items.reduce((sum, item) => sum + item.quantidade, 0);
+    const separated = next.items.reduce((sum, item) => sum + item.separado, 0);
+    const status = total > 0 && separated >= total ? "concluida" : "em_andamento";
+    const normalized = { ...next, status };
+
+    setData(normalized);
+    localStorage.setItem("listapedidos:separacao-atual", JSON.stringify(normalized));
 
     // Mantém também a cópia do histórico sincronizada com a alteração.
     // Assim, ao sair e reabrir uma separação, ela volta exatamente ao último estado salvo.
     try {
       const history = JSON.parse(localStorage.getItem("listapedidos:historico") || "[]");
       const updatedHistory = history.map((entry: Separation) =>
-        entry.id === next.id ? { ...entry, ...next, status: entry.status || next.status || "em_andamento" } : entry
+        entry.id === normalized.id ? { ...entry, ...normalized } : entry
       );
       localStorage.setItem("listapedidos:historico", JSON.stringify(updatedHistory));
     } catch {
