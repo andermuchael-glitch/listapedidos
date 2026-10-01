@@ -154,18 +154,59 @@ async function extractPdfRows(file: File) {
 
     // Produto principal: número do item, nome do produto e quantidade total.
     // Ex.: "1 MOEDEIRO 54"
-    const productMatch = textLine.match(/^(\d+)\s+(.+?)\s+(\d+)$/);
+    // O PDF pode trazer preço/subtotal na mesma linha, por exemplo:
+    // "1 MOEDEIRO 54 ----- R$ 10,90 R$ 588,60".
+    // Por isso capturamos a primeira quantidade numérica depois do nome
+    // e não exigimos que ela seja o último token da linha.
+    const productMatch = textLine.match(/^(\d+)\s+(.+?)\s+(\d+)(?=\s|$)/);
     if (!productMatch) continue;
 
-    const productName = productMatch[2].trim();
+    let productName = productMatch[2].trim();
     const totalQuantity = Number(productMatch[3]);
+
+    // Remove separadores comerciais que eventualmente ficaram no nome.
+    productName = productName.replace(/[-–—|]+\s*$/, "").trim();
 
     if (!productName || !Number.isFinite(totalQuantity) || totalQuantity <= 0) {
       continue;
     }
 
-    const codeParts = normalizedLines[i + 1] ?? [];
-    const quantityParts = normalizedLines[i + 2] ?? [];
+    // As linhas de códigos e quantidades podem ter linhas visuais vazias ou
+    // separadores entre elas. Procuramos as duas próximas linhas numéricas.
+    let codeLineIndex = -1;
+    let quantityLineIndex = -1;
+
+    for (let lookahead = 1; lookahead <= 4; lookahead++) {
+      const candidate = normalizedLines[i + lookahead] ?? [];
+      const candidateCodes = candidate.filter(isNumberToken);
+      if (candidateCodes.length >= 2) {
+        codeLineIndex = i + lookahead;
+        break;
+      }
+    }
+
+    if (codeLineIndex < 0) continue;
+
+    for (let lookahead = 1; lookahead <= 4; lookahead++) {
+      const candidateIndex = codeLineIndex + lookahead;
+      const candidate = normalizedLines[candidateIndex] ?? [];
+      const candidateQuantities = candidate
+        .filter(isNumberToken)
+        .map((value) => Number(value));
+
+      if (
+        candidateQuantities.length === normalizedLines[codeLineIndex].filter(isNumberToken).length &&
+        candidateQuantities.length >= 2
+      ) {
+        quantityLineIndex = candidateIndex;
+        break;
+      }
+    }
+
+    if (quantityLineIndex < 0) continue;
+
+    const codeParts = normalizedLines[codeLineIndex] ?? [];
+    const quantityParts = normalizedLines[quantityLineIndex] ?? [];
 
     const codes = codeParts.filter(isNumberToken);
     const quantities = quantityParts
@@ -199,8 +240,8 @@ async function extractPdfRows(file: File) {
       rows.push([quantity, code, productName]);
     }
 
-    // Pula as duas linhas já consumidas.
-    i += 2;
+    // Pula até a última linha consumida pelo bloco.
+    i = quantityLineIndex;
   }
 
   if (!rows.length) {
