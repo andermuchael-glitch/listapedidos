@@ -5,11 +5,12 @@ import { useEffect, useState } from "react";
 import { History, Download, Upload, Trash2, FolderOpen } from "lucide-react";
 
 type Item = { id: string; codigo: string; descricao: string; quantidade: number; separado: number };
-type Separation = { id: string; fileName: string; items: Item[]; createdAt: string; status?: string; finishedAt?: string; archivedAt?: string };
+type Separation = { id: string; fileName: string; numero?: string; cliente?: string; items: Item[]; createdAt: string; status?: string; finishedAt?: string; archivedAt?: string };
 
 export default function HistoricoPage() {
   const [history, setHistory] = useState<Separation[]>([]);
   const [message, setMessage] = useState("");
+  const [query, setQuery] = useState("");
 
   useEffect(() => {
     setHistory(JSON.parse(localStorage.getItem("listapedidos:historico") || "[]"));
@@ -99,7 +100,11 @@ export default function HistoricoPage() {
 
       <section className="section">
         <div className="section-heading"><div><p className="eyebrow">SEPARAÇÕES SALVAS</p><h2>{history.length ? `${history.length} registro(s)` : "Nenhuma separação salva"}</h2></div></div>
-        {history.map((entry) => {
+        {history.filter((entry) => {
+          const q = query.toLowerCase().trim();
+          if (!q) return true;
+          return [entry.numero, entry.cliente, entry.fileName].filter(Boolean).some((value) => String(value).toLowerCase().includes(q));
+        }).map((entry) => {
           const total = entry.items.reduce((s, i) => s + i.quantidade, 0);
           const separated = entry.items.reduce((s, i) => s + i.separado, 0);
           return (
@@ -119,7 +124,11 @@ export default function HistoricoPage() {
             >
               <div className="item-main">
                 <div className="check-circle">{entry.status === "concluida" ? "✓" : "•"}</div>
-                <div><strong>{entry.fileName}</strong><p>{separated} / {total} unidades separadas · {entry.status === "concluida" ? "Concluída" : "Em andamento"}</p></div>
+                <div>
+                  <p className="history-order-number">PEDIDO {entry.numero ? `#${entry.numero}` : "SEM NÚMERO"}</p>
+                  <strong className="history-client">{entry.cliente || "Cliente não identificado"}</strong>
+                  <p>{entry.fileName} · {separated} / {total} unidades separadas · {entry.status === "concluida" ? "Concluída" : "Em andamento"}</p>
+                </div>
               </div>
               <div className="history-actions">
                 <span className="badge">{Math.round((separated / Math.max(total,1))*100)}%</span>
