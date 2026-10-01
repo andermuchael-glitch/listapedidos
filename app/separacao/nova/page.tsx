@@ -253,6 +253,23 @@ async function extractPdfRows(file: File) {
   return { rows, numero, cliente };
 }
 
+function extractSpreadsheetOrderNumber(matrix: SheetMatrix) {
+  for (let r = 0; r < matrix.length; r++) {
+    const row = matrix[r] ?? [];
+    for (let col = 0; col < row.length; col++) {
+      const label = norm(row[col]);
+      if (!label.includes("venda") || !label.includes("n")) continue;
+      const sameCell = cell(row[col]).match(/(?:venda|pedido)\\s*(?:n[ºo]?|numero)?\\s*[:#-]?\\s*(\\d{3,})/i);
+      if (sameCell) return sameCell[1];
+      for (let next = col + 1; next < row.length; next++) {
+        const value = cell(row[next]).match(/\\d{3,}/);
+        if (value) return value[0];
+      }
+    }
+  }
+  return "";
+}
+
 function locateLaunchProductTable(matrix: SheetMatrix) {
   // Modelo ListaPedidos com a área "LANÇAMENTO DE PEDIDO".
   // Usa os cabeçalhos exatos da tabela para não confundir "Subtotal"
@@ -507,6 +524,7 @@ export default function NovaSeparacaoPage() {
             raw: true
           });
 
+          numero ||= extractSpreadsheetOrderNumber(matrix);
           const launchTable = locateLaunchProductTable(matrix);
           const tables = launchTable ? [launchTable] : locateProductTables(matrix);
           for (const table of tables) {
