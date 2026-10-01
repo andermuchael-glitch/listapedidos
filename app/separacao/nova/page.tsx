@@ -1,9 +1,10 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { CheckCircle2, FileSpreadsheet, FileText, Upload } from "lucide-react";
 import * as XLSX from "xlsx";
+import { getCurrentUser, saveOrder } from "../../../lib/api";
 
 type Cell = string | number | boolean;
 type SheetMatrix = Cell[][];
@@ -531,6 +532,13 @@ export default function NovaSeparacaoPage() {
   const [error, setError] = useState("");
   const [creating, setCreating] = useState(false);
   const [manualNumero, setManualNumero] = useState("");
+  const [cloudReady, setCloudReady] = useState(false);
+
+  useEffect(() => {
+    getCurrentUser()
+      .then((result) => setCloudReady(result.authenticated))
+      .catch(() => setCloudReady(false));
+  }, []);
 
   async function handleFiles(fileList?: FileList | null) {
     if (!fileList?.length) return;
@@ -660,7 +668,7 @@ export default function NovaSeparacaoPage() {
     }
   }
 
-  function createList() {
+  async function createList() {
     if (!preview) return;
     setCreating(true);
 
@@ -698,19 +706,41 @@ export default function NovaSeparacaoPage() {
       }
     }
 
+    const separation = {
+      id: `sep-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      fileName: preview.fileName,
+      sheetName: preview.sheetName,
+      parserVersion: preview.parserVersion,
+      numero: manualNumero.trim() || preview.numero || "",
+      cliente: preview.cliente || "",
+      items,
+      totalRows: items.length,
+      createdAt: new Date().toISOString(),
+      status: "em_andamento"
+    };
+
+    try {
+      await saveOrder({
+        id: separation.id,
+        numero: separation.numero,
+        cliente: separation.cliente,
+        arquivoNome: separation.fileName,
+        status: separation.status,
+        items: separation.items
+      });
+    } catch (syncError) {
+      setCreating(false);
+      setError(
+        syncError instanceof Error
+          ? `O pedido não foi salvo na nuvem: ${syncError.message}`
+          : "O pedido não foi salvo na nuvem."
+      );
+      return;
+    }
+
     localStorage.setItem(
       "listapedidos:separacao-atual",
-      JSON.stringify({
-        id: `sep-${Date.now()}`,
-        fileName: preview.fileName,
-        sheetName: preview.sheetName,
-        parserVersion: preview.parserVersion,
-        numero: manualNumero.trim() || preview.numero || "",
-        cliente: preview.cliente || "",
-        items,
-        totalRows: items.length,
-        createdAt: new Date().toISOString()
-      })
+      JSON.stringify(separation)
     );
 
     window.location.href = "/listapedidos/separacao/atual/";
@@ -823,8 +853,8 @@ export default function NovaSeparacaoPage() {
             </span>
           </div>
 
-          <button className="primary-button full-width" type="button" onClick={createList} disabled={creating || (!preview.numero && !manualNumero.trim())}>
-            {creating ? "Criando lista..." : (!preview.numero && !manualNumero.trim()) ? "Informe o número do pedido" : "Usar esta tabela e criar separação"}
+          <button className="primary-button full-width" type="button" onClick={createList} disabled={creating || !cloudReady || (!preview.numero && !manualNumero.trim())}>
+            {creating ? "Salvando na nuvem..." : !cloudReady ? "Entre para salvar na nuvem" : (!preview.numero && !manualNumero.trim()) ? "Informe o número do pedido" : "Usar esta tabela e criar separação"}
           </button>
         </section>
       )}
