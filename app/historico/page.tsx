@@ -1,9 +1,9 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { History, Download, Upload, Trash2, FolderOpen } from "lucide-react";
-import { deleteAllOrders, deleteOrder, getOrder, listOrders } from "../../lib/api";
+import { deleteAllOrders, deleteOrder, getOrder, listOrders, saveOrder } from "../../lib/api";
 
 type Item = { id: string; codigo: string; descricao: string; quantidade: number; separado: number };
 type Separation = { id: string; fileName: string; numero?: string; cliente?: string; items: Item[]; createdAt: string; status?: string; finishedAt?: string; archivedAt?: string; totalUnidades?: number; totalSeparado?: number };
@@ -12,13 +12,20 @@ export default function HistoricoPage() {
   const [history, setHistory] = useState<Separation[]>([]);
   const [message, setMessage] = useState("");
   const [query, setQuery] = useState("");
+  const restoreGeneration = useRef(0);
 
   useEffect(() => {
     const localHistory = JSON.parse(localStorage.getItem("listapedidos:historico") || "[]");
     setHistory(localHistory);
 
+    const generationAtStart = restoreGeneration.current;
+
     listOrders()
       .then((orders) => {
+        // Se um backup foi restaurado enquanto a consulta estava em andamento,
+        // não deixe a resposta antiga da nuvem sobrescrever o backup recém-restaurado.
+        if (restoreGeneration.current !== generationAtStart) return;
+
         const cloudHistory: Separation[] = orders.map((order) => ({
           id: order.id,
           fileName: order.arquivoNome,
@@ -57,21 +64,105 @@ export default function HistoricoPage() {
     setMessage("Backup baixado com sucesso.");
   }
 
-  function restore(file?: File) {
+  async function restore(file?: File) {
     if (!file) return;
+
     const reader = new FileReader();
-    reader.onload = () => {
+
+    reader.onload = async () => {
       try {
         const payload = JSON.parse(String(reader.result));
-        if (payload?.app !== "ListaPedidos" || !Array.isArray(payload.history)) throw new Error();
-        if (payload.current) localStorage.setItem("listapedidos:separacao-atual", JSON.stringify(payload.current));
-        localStorage.setItem("listapedidos:historico", JSON.stringify(payload.history));
-        setHistory(payload.history);
-        setMessage("Backup restaurado. A separação e o histórico foram recuperados.");
+
+        if (
+          payload?.app !== "ListaPedidos" ||
+          !Array.isArray(payload.history)
+        ) {
+          throw new Error();
+        }
+
+        // Invalida qualquer consulta de nuvem iniciada antes da restauração.
+        restoreGeneration.current += 1;
+
+        const restoredHistory = payload.history as Separation[];
+        const restoredCurrent = payload.current as Separation | null;
+
+        if (restoredCurrent) {
+          localStorage.setItem(
+            "listapedidos:separacao-atual",
+            JSON.stringify(restoredCurrent)
+          );
+        }
+
+        localStorage.setItem(
+          "listapedidos:historico",
+          JSON.stringify(restoredHistory)
+        );
+
+        // Atualiza a tela imediatamente e mantém o backup mesmo que a nuvem
+        // esteja indisponível.
+        setHistory(restoredHistory);
+        setMessage(
+          "Backup restaurado. A separação e o histórico foram recuperados."
+        );
+
+        // Se houver sessão, tenta reconstruir também a cópia na nuvem.
+        // Falha aqui não apaga a restauração local.
+        const ordersToSync = [...restoredHistory];
+
+        if (
+          restoredCurrent &&
+          !ordersToSync.some(
+            (entry) => entry.id === restoredCurrent.id
+          )
+        ) {
+          ordersToSync.unshift(restoredCurrent);
+        }
+
+        const syncable = ordersToSync.filter(
+          (entry) =>
+            Array.isArray(entry.items) &&
+            entry.items.length > 0
+        );
+
+        if (syncable.length > 0) {
+          try {
+            await Promise.all(
+              syncable.map((entry) =>
+                saveOrder({
+                  id: entry.id,
+                  numero: entry.numero || "",
+                  cliente: entry.cliente || "",
+                  arquivoNome: entry.fileName || "",
+                  status:
+                    entry.status ||
+                    "em_andamento",
+                  items: entry.items.map((item) => ({
+                    id: String(item.id),
+                    codigo: item.codigo || "",
+                    descricao: item.descricao || "",
+                    quantidade: Number(item.quantidade) || 0,
+                    separado: Number(item.separado) || 0
+                  }))
+                })
+              )
+            );
+
+            setMessage(
+              "Backup restaurado e sincronizado com a nuvem."
+            );
+          } catch {
+            setMessage(
+              "Backup restaurado localmente. A sincronização com a nuvem será tentada novamente quando houver conexão."
+            );
+          }
+        }
       } catch {
-        setMessage("Backup inválido. Selecione um arquivo .json do ListaPedidos.");
+        setMessage(
+          "Backup inválido. Selecione um arquivo .json do ListaPedidos."
+        );
       }
     };
+
     reader.readAsText(file);
   }
 
