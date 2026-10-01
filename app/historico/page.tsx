@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { History, Download, Upload, Trash2, FolderOpen } from "lucide-react";
-import { deleteAllOrders, deleteOrder, listOrders } from "../../lib/api";
+import { deleteAllOrders, deleteOrder, getOrder, listOrders } from "../../lib/api";
 
 type Item = { id: string; codigo: string; descricao: string; quantidade: number; separado: number };
 type Separation = { id: string; fileName: string; numero?: string; cliente?: string; items: Item[]; createdAt: string; status?: string; finishedAt?: string; archivedAt?: string; totalUnidades?: number; totalSeparado?: number };
@@ -75,8 +75,33 @@ export default function HistoricoPage() {
     reader.readAsText(file);
   }
 
-  function openSeparation(entry: Separation) {
-    localStorage.setItem("listapedidos:separacao-atual", JSON.stringify(entry));
+  async function openSeparation(entry: Separation) {
+    try {
+      const cloud = await getOrder(entry.id);
+      const full: Separation = {
+        id: cloud.id,
+        fileName: cloud.arquivoNome,
+        numero: cloud.numero || "",
+        cliente: cloud.cliente || "",
+        items: cloud.items.map((item) => ({
+          id: String(item.id),
+          codigo: item.codigo,
+          descricao: item.descricao,
+          quantidade: Number(item.quantidade) || 0,
+          separado: Number(item.separado) || 0
+        })),
+        createdAt: cloud.criadoEm || entry.createdAt,
+        status: cloud.status
+      };
+      localStorage.setItem("listapedidos:separacao-atual", JSON.stringify(full));
+    } catch {
+      // Se estiver offline, só usamos a cópia local quando ela realmente contém itens.
+      if (!entry.items.length) {
+        setMessage("Não foi possível abrir este pedido agora. Conecte-se à internet para carregar os itens salvos na nuvem.");
+        return;
+      }
+      localStorage.setItem("listapedidos:separacao-atual", JSON.stringify(entry));
+    }
     window.location.href = "/listapedidos/separacao/atual/";
   }
 
