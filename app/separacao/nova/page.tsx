@@ -673,8 +673,8 @@ export default function NovaSeparacaoPage() {
             </span>
           </div>
 
-          <button className="primary-button full-width" type="button" onClick={createList} disabled={creating || !manualNumero.trim()}>
-            {creating ? "Criando lista..." : !manualNumero.trim() ? "Informe o número do pedido" : "Usar esta tabela e criar separação"}
+          <button className="primary-button full-width" type="button" onClick={createList} disabled={creating || (!preview.numero && !manualNumero.trim())}>
+            {creating ? "Criando lista..." : (!preview.numero && !manualNumero.trim()) ? "Informe o número do pedido" : "Usar esta tabela e criar separação"}
           </button>
         </section>
       )}
