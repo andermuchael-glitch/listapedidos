@@ -353,7 +353,8 @@ export default function NovaSeparacaoPage() {
   const [preview, setPreview] = useState<Preview | null>(null);
   const [selectedFiles, setSelectedFiles] = useState<string[]>([]);
   const [error, setError] = useState("");
-  const [creating, setCreating] = useState(false);\n  const [manualNumero, setManualNumero] = useState("");
+  const [creating, setCreating] = useState(false);
+  const [manualNumero, setManualNumero] = useState("");
 
   async function handleFiles(fileList?: FileList | null) {
     if (!fileList?.length) return;
