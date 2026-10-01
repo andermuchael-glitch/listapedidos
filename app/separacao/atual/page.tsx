@@ -6,7 +6,9 @@ import { ArrowLeft, Check, Minus, Plus, Search } from "lucide-react";
 import { getOrder, listOrders, saveOrder, updateItemSeparated } from "../../../lib/api";
 
 type Item = { id: string; codigo: string; descricao: string; quantidade: number; separado: number };
-type Separation = { id: string; fileName: string; numero: string; cliente: string; items: Item[]; createdAt: string; status?: string; finishedAt?: string };\ntype PendingSync = { orderId: string; itemId: string; separado: number };\nconst PENDING_SYNC_KEY = "listapedidos:sync-pendente";
+type Separation = { id: string; fileName: string; numero: string; cliente: string; items: Item[]; createdAt: string; status?: string; finishedAt?: string };
+type PendingSync = { orderId: string; itemId: string; separado: number };
+const PENDING_SYNC_KEY = "listapedidos:sync-pendente";
 
 function readPendingSync(): PendingSync[] {
   try {
