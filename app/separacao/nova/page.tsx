@@ -19,6 +19,7 @@ type Preview = {
   allRows: SheetMatrix;
   numero?: string;
   cliente?: string;
+  parserVersion: string;
 };
 
 const norm = (v: unknown) =>
@@ -348,6 +349,45 @@ function locateLaunchProductTable(matrix: SheetMatrix) {
   return null;
 }
 
+
+const PARSER_VERSION = "2026-10-01-3";
+
+function validateImportedRows(rows: SheetMatrix) {
+  if (!rows.length) {
+    throw new Error("A leitura não encontrou produtos válidos.");
+  }
+
+  const invalidIndex = rows.findIndex((row) => {
+    const quantity = numberValue(row[0]);
+    const code = cell(row[1]);
+    const description = cell(row[2]);
+
+    // Quantidade precisa ser positiva; descrição precisa ser texto real.
+    // Isso bloqueia o erro antigo em que Subtotal (23) virava quantidade
+    // e a quantidade original (2) virava descrição.
+    if (!Number.isFinite(quantity) || quantity <= 0) return true;
+    if (!description || /^[-+]?\d+(?:[.,]\d+)?$/.test(description)) return true;
+    if (!code) return true;
+    return false;
+  });
+
+  if (invalidIndex >= 0) {
+    const row = rows[invalidIndex];
+    throw new Error(
+      "A leitura desta planilha não passou na validação. " +
+      "A separação não foi criada porque Quantidade, Código e Descrição não foram identificados com segurança. " +
+      "Verifique a prévia e tente novamente."
+    );
+  }
+
+  const totalUnits = rows.reduce((sum, row) => sum + numberValue(row[0]), 0);
+  if (!Number.isFinite(totalUnits) || totalUnits <= 0) {
+    throw new Error("A soma das quantidades lidas é inválida. A separação não foi criada.");
+  }
+
+  return { totalUnits };
+}
+
 function locateMatrixProductTable(matrix: SheetMatrix) {
   // Modelo "matriz de pedidos": produto na primeira coluna, destinos/clientes
   // nas colunas seguintes e uma coluna final "Total". Ex.: Canga | 0 | 100 | ... | 124.
@@ -598,6 +638,8 @@ export default function NovaSeparacaoPage() {
         uniqueRows.push(row);
       }
 
+      validateImportedRows(uniqueRows);
+
       setSelectedFiles(sources);
       setPreview({
         fileName: files.length === 1 ? files[0].name : `${files.length} arquivos selecionados`,
@@ -610,7 +652,8 @@ export default function NovaSeparacaoPage() {
         productCol: firstProduct,
         launchRow: firstLaunch,
         rows: uniqueRows.slice(0, 8),
-        allRows: uniqueRows
+        allRows: uniqueRows,
+        parserVersion: PARSER_VERSION
       });
     } catch (e) {
       setError(e instanceof Error ? e.message : "Não foi possível ler os arquivos.");
@@ -620,6 +663,14 @@ export default function NovaSeparacaoPage() {
   function createList() {
     if (!preview) return;
     setCreating(true);
+
+    try {
+      validateImportedRows(preview.allRows);
+    } catch (validationError) {
+      setCreating(false);
+      setError(validationError instanceof Error ? validationError.message : "A leitura não passou na validação.");
+      return;
+    }
 
     const items = preview.allRows.map((row, index) => ({
       id: String(index + 1),
@@ -653,6 +704,7 @@ export default function NovaSeparacaoPage() {
         id: `sep-${Date.now()}`,
         fileName: preview.fileName,
         sheetName: preview.sheetName,
+        parserVersion: preview.parserVersion,
         numero: manualNumero.trim() || preview.numero || "",
         cliente: preview.cliente || "",
         items,
@@ -698,6 +750,7 @@ export default function NovaSeparacaoPage() {
             <div>
               <p className="eyebrow">ETAPA 2 — ÁREA SELECIONADA</p>
               <h2>Confira a tabela que será usada</h2>
+              <small style={{ color: "var(--muted)" }}>Leitor {preview.parserVersion}</small>
             </div>
             <CheckCircle2 className="success-icon" />
           </div>
@@ -764,9 +817,9 @@ export default function NovaSeparacaoPage() {
           </div>
 
           <div className="notice">
-            <strong>Pronto para importar</strong>
+            <strong>Leitura validada — {preview.allRows.length} produtos</strong>
             <span>
-              A prévia mostra os primeiros {preview.rows.length} itens, mas a separação usará todos os {preview.allRows.length} produtos. Valores, subtotais e totais da planilha não são importados.
+              Foram identificados {preview.allRows.reduce((sum, row) => sum + numberValue(row[0]), 0)} unidades. Primeiro item: {cell(preview.allRows[0]?.[2])}. A prévia mostra os primeiros {preview.rows.length} itens, mas a separação usará todos os {preview.allRows.length} produtos. Valores, subtotais e totais da planilha não são importados.
             </span>
           </div>
 
