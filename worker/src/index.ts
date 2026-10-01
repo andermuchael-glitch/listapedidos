@@ -489,7 +489,8 @@ export default {
         const result = await env.DB.prepare(
           `SELECT id,numero_pedido AS numero,cliente,arquivo_nome AS arquivoNome,status,
                   total_itens AS totalItens,total_unidades AS totalUnidades,
-                  criado_em AS criadoEm,atualizado_em AS atualizadoEm
+                (SELECT COALESCE(SUM(separado),0) FROM itens_pedido ip WHERE ip.pedido_id=pedidos.id) AS totalSeparado,
+                criado_em AS criadoEm,atualizado_em AS atualizadoEm
            FROM pedidos WHERE usuario_id=? ORDER BY atualizado_em DESC LIMIT 100`
         )
           .bind(uid)
