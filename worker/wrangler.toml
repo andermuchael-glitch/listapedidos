@@ -7,6 +7,5 @@ ALLOWED_ORIGIN = "https://andermuchael-glitch.github.io"
 
 [[d1_databases]]
 binding = "DB"
-database_name = "listapedidos-db"
-database_id = "COLOQUE-SEU-DATABASE-ID-AQUI"
-migrations_dir = "migrations"
+database_name = "listapedidos"
+database_id = "52b9dd7a-7684-4f55-ace7-1163598c6305"
