@@ -123,7 +123,11 @@ export async function saveOrder(order: {
   });
 }
 
-export async function deleteAllOrders() {\n  return request<{ ok: boolean }>("/api/pedidos", { method: "DELETE" });\n}\n\nexport async function deleteOrder(id: string) {
+export async function deleteAllOrders() {
+  return request<{ ok: boolean }>("/api/pedidos", { method: "DELETE" });
+}
+
+export async function deleteOrder(id: string) {
   return request<{ ok: boolean; id: string }>(
     `/api/pedidos/${encodeURIComponent(id)}`,
     { method: "DELETE" }
