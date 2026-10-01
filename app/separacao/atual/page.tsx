@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { ArrowLeft, Check, Minus, Plus, Search } from "lucide-react";
+import { getOrder, listOrders, updateItemSeparated } from "../../../lib/api";
 
 type Item = { id: string; codigo: string; descricao: string; quantidade: number; separado: number };
 type Separation = { id: string; fileName: string; numero: string; cliente: string; items: Item[]; createdAt: string; status?: string; finishedAt?: string };
@@ -11,10 +12,81 @@ export default function SeparacaoAtualPage() {
   const [data, setData] = useState<Separation | null>(null);
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<"todos" | "pendentes" | "separados">("todos");
+  const [syncError, setSyncError] = useState("");
 
   useEffect(() => {
-    const raw = localStorage.getItem("listapedidos:separacao-atual");
-    if (raw) setData(JSON.parse(raw));
+    let cancelled = false;
+
+    async function load() {
+      let localData: Separation | null = null;
+
+      try {
+        const raw = localStorage.getItem("listapedidos:separacao-atual");
+        if (raw) localData = JSON.parse(raw);
+      } catch {
+        localData = null;
+      }
+
+      try {
+        if (localData?.id) {
+          const cloud = await getOrder(localData.id);
+          if (!cancelled) {
+            const merged: Separation = {
+              id: cloud.id,
+              fileName: cloud.arquivoNome,
+              numero: cloud.numero || "",
+              cliente: cloud.cliente || "",
+              items: cloud.items.map((item) => ({
+                id: String(item.id),
+                codigo: item.codigo,
+                descricao: item.descricao,
+                quantidade: Number(item.quantidade) || 0,
+                separado: Number(item.separado) || 0
+              })),
+              createdAt: cloud.criadoEm || localData.createdAt,
+              status: cloud.status
+            };
+            setData(merged);
+            localStorage.setItem("listapedidos:separacao-atual", JSON.stringify(merged));
+          }
+          return;
+        }
+
+        const orders = await listOrders();
+        if (orders.length) {
+          const cloud = await getOrder(orders[0].id);
+          if (!cancelled) {
+            const fresh: Separation = {
+              id: cloud.id,
+              fileName: cloud.arquivoNome,
+              numero: cloud.numero || "",
+              cliente: cloud.cliente || "",
+              items: cloud.items.map((item) => ({
+                id: String(item.id),
+                codigo: item.codigo,
+                descricao: item.descricao,
+                quantidade: Number(item.quantidade) || 0,
+                separado: Number(item.separado) || 0
+              })),
+              createdAt: cloud.criadoEm || new Date().toISOString(),
+              status: cloud.status
+            };
+            setData(fresh);
+            localStorage.setItem("listapedidos:separacao-atual", JSON.stringify(fresh));
+          }
+          return;
+        }
+      } catch {
+        // Sem internet/login, usamos o cache local.
+      }
+
+      if (!cancelled && localData) setData(localData);
+    }
+
+    load();
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   function save(next: Separation) {
@@ -34,14 +106,26 @@ export default function SeparacaoAtualPage() {
     }
   }
 
+  function syncItem(id: string, separado: number) {
+    if (!data) return;
+    updateItemSeparated(data.id, id, separado)
+      .then(() => setSyncError(""))
+      .catch((error) => {
+        setSyncError(error instanceof Error ? error.message : "Não foi possível sincronizar com a nuvem.");
+      });
+  }
+
   function changeQuantity(id: string, delta: number) {
     if (!data) return;
+    const current = data.items.find((item) => item.id === id);
+    if (!current) return;
+
+    const nextValue = Math.max(0, Math.min(current.quantidade, current.separado + delta));
     const items = data.items.map((item) =>
-      item.id === id
-        ? { ...item, separado: Math.max(0, Math.min(item.quantidade, item.separado + delta)) }
-        : item
+      item.id === id ? { ...item, separado: nextValue } : item
     );
     save({ ...data, items });
+    syncItem(id, nextValue);
   }
 
   function setQuantity(id: string, value: string) {
@@ -57,6 +141,7 @@ export default function SeparacaoAtualPage() {
       current.id === id ? { ...current, separado: nextValue } : current
     );
     save({ ...data, items });
+    syncItem(id, nextValue);
   }
 
   const visibleItems = useMemo(() => {
@@ -110,6 +195,8 @@ export default function SeparacaoAtualPage() {
       </section>
 
       <div className="progress-track"><div style={{ width: `${progress}%` }} /></div>
+
+      {syncError && <div className="error-box">{syncError} O progresso continua salvo neste dispositivo e será sincronizado quando possível.</div>}
 
       <div className="stats-row">
         <span><strong>{completed}</strong> concluídos</span>
