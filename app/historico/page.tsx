@@ -3,9 +3,10 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { History, Download, Upload, Trash2, FolderOpen } from "lucide-react";
+import { deleteOrder, listOrders } from "../../lib/api";
 
 type Item = { id: string; codigo: string; descricao: string; quantidade: number; separado: number };
-type Separation = { id: string; fileName: string; numero?: string; cliente?: string; items: Item[]; createdAt: string; status?: string; finishedAt?: string; archivedAt?: string };
+type Separation = { id: string; fileName: string; numero?: string; cliente?: string; items: Item[]; createdAt: string; status?: string; finishedAt?: string; archivedAt?: string; totalUnidades?: number; totalSeparado?: number };
 
 export default function HistoricoPage() {
   const [history, setHistory] = useState<Separation[]>([]);
@@ -13,7 +14,29 @@ export default function HistoricoPage() {
   const [query, setQuery] = useState("");
 
   useEffect(() => {
-    setHistory(JSON.parse(localStorage.getItem("listapedidos:historico") || "[]"));
+    const localHistory = JSON.parse(localStorage.getItem("listapedidos:historico") || "[]");
+    setHistory(localHistory);
+
+    listOrders()
+      .then((orders) => {
+        const cloudHistory: Separation[] = orders.map((order) => ({
+          id: order.id,
+          fileName: order.arquivoNome,
+          numero: order.numero || "",
+          cliente: order.cliente || "",
+          items: [],
+          createdAt: order.criadoEm || new Date().toISOString(),
+          status: order.status,
+          totalUnidades: order.totalUnidades,
+          totalSeparado: order.totalSeparado
+        })) as Separation[];
+
+        setHistory(cloudHistory);
+        localStorage.setItem("listapedidos:historico", JSON.stringify(cloudHistory));
+      })
+      .catch(() => {
+        // Sem sessão ou internet: mantém o histórico local.
+      });
   }, []);
 
   function backup() {
@@ -57,10 +80,17 @@ export default function HistoricoPage() {
     window.location.href = "/listapedidos/separacao/atual/";
   }
 
-  function deleteSeparation(id: string) {
+  async function deleteSeparation(id: string) {
     const entry = history.find((item) => item.id === id);
     if (!entry) return;
     if (!confirm(`Excluir a separação "${entry.fileName}" do histórico? Esta ação não apaga o arquivo de backup.`)) return;
+
+    try {
+      await deleteOrder(id);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Não foi possível excluir o pedido na nuvem.");
+      return;
+    }
 
     const next = history.filter((item) => item.id !== id);
     localStorage.setItem("listapedidos:historico", JSON.stringify(next));
@@ -105,8 +135,8 @@ export default function HistoricoPage() {
           if (!q) return true;
           return [entry.numero, entry.cliente, entry.fileName].filter(Boolean).some((value) => String(value).toLowerCase().includes(q));
         }).map((entry) => {
-          const total = entry.items.reduce((s, i) => s + i.quantidade, 0);
-          const separated = entry.items.reduce((s, i) => s + i.separado, 0);
+          const total = entry.totalUnidades ?? entry.items.reduce((s, i) => s + i.quantidade, 0);
+          const separated = entry.totalSeparado ?? entry.items.reduce((s, i) => s + i.separado, 0);
           return (
             <article
               className="item-card history-card"
