@@ -74,6 +74,13 @@ export default function SeparacaoAtualPage() {
         if (localData?.id) {
           const cloud = await getOrder(localData.id);
           if (!cancelled) {
+            // Se a nuvem ainda não possui os itens, o backup/local é a fonte
+            // de verdade. Nunca transformamos uma separação válida em 0/0.
+            if ((!cloud.items || cloud.items.length === 0) && (localData.items || []).length > 0) {
+              setData(localData);
+              return;
+            }
+
             const localById = new Map(
               (localData.items || []).map((item) => [String(item.id), item])
             );
@@ -83,7 +90,7 @@ export default function SeparacaoAtualPage() {
               fileName: cloud.arquivoNome || localData.fileName,
               numero: cloud.numero || localData.numero || "",
               cliente: cloud.cliente || localData.cliente || "",
-              items: cloud.items.map((item) => {
+              items: (cloud.items || []).map((item) => {
                 const local = localById.get(String(item.id));
                 return {
                   id: String(item.id),
@@ -93,8 +100,6 @@ export default function SeparacaoAtualPage() {
                     Number(item.quantidade) ||
                     Number(local?.quantidade) ||
                     0,
-                  // Nunca reduz o progresso local por causa de uma resposta
-                  // antiga da nuvem.
                   separado: Math.max(
                     Number(item.separado) || 0,
                     Number(local?.separado) || 0
@@ -112,6 +117,8 @@ export default function SeparacaoAtualPage() {
             await retryPendingSync(merged.id);
             try {
               const refreshed = await getOrder(merged.id);
+              if (!refreshed.items || refreshed.items.length === 0) return;
+
               const currentLocal = JSON.parse(
                 localStorage.getItem("listapedidos:separacao-atual") || "null"
               ) as Separation | null;
