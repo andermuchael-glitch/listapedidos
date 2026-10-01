@@ -5,7 +5,16 @@ import { ClipboardList, FileSpreadsheet, History, Plus, LogIn, LogOut } from "lu
 import { getCurrentUser, logout } from "../lib/api";
 import { useEffect, useState } from "react";
 
-export default function Home() {\n  const [user, setUser] = useState<{ nome: string; email: string } | null>(null);\n\n  useEffect(() => {\n    getCurrentUser()\n      .then((result) => {\n        if (result.authenticated && result.user) setUser(result.user);\n      })\n      .catch(() => setUser(null));\n  }, []);
+export default function Home() {
+  const [user, setUser] = useState<{ nome: string; email: string } | null>(null);
+
+  useEffect(() => {
+    getCurrentUser()
+      .then((result) => {
+        if (result.authenticated && result.user) setUser(result.user);
+      })
+      .catch(() => setUser(null));
+  }, []);
   return (
     <main className="app-shell">
       <header className="topbar">
@@ -13,7 +22,16 @@ export default function Home() {\n  const [user, setUser] = useState<{ nome: str
           <span className="eyebrow">LISTAPEDIDOS</span>
           <h1>Separação</h1>
         </div>
-        <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>\n          {user ? (\n            <button className="filter" type="button" onClick={async () => { await logout().catch(() => undefined); window.location.reload(); }} title="Sair">\n              <LogOut size={17} /> Sair\n            </button>\n          ) : (\n            <Link className="filter" href="/login"><LogIn size={17} /> Entrar</Link>\n          )}\n          <div className="brand-mark">LP</div>\n        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+          {user ? (
+            <button className="filter" type="button" onClick={async () => { await logout().catch(() => undefined); window.location.reload(); }} title="Sair">
+              <LogOut size={17} /> Sair
+            </button>
+          ) : (
+            <Link className="filter" href="/login"><LogIn size={17} /> Entrar</Link>
+          )}
+          <div className="brand-mark">LP</div>
+        </div>
       </header>
 
       <section className="hero-card">
@@ -21,7 +39,8 @@ export default function Home() {\n  const [user, setUser] = useState<{ nome: str
           <span className="status-dot" />
           <p className="eyebrow">CENTRAL DE SEPARAÇÃO</p>
           <h2>Transforme sua planilha em uma lista de separação.</h2>
-          <p className="muted">Importe o pedido, confira os dados e acompanhe a quantidade separada em tempo real.</p>\n          {user && <p className="muted">Sincronizado na nuvem como <strong>{user.nome || user.email}</strong>.</p>}
+          <p className="muted">Importe o pedido, confira os dados e acompanhe a quantidade separada em tempo real.</p>
+          {user && <p className="muted">Sincronizado na nuvem como <strong>{user.nome || user.email}</strong>.</p>}
         </div>
         <Link className="primary-button" href="/separacao/nova">
           <Plus size={20} /> Nova separação
