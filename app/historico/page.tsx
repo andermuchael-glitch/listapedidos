@@ -213,25 +213,37 @@ export default function HistoricoPage() {
           JSON.stringify(entry)
         );
       } else {
+        const localById = new Map(entry.items.map((item) => [String(item.id), item]));
+        const cloudMapped = cloudItems.map((item) => {
+          const local = localById.get(String(item.id));
+          // Se o backup/local tem mais progresso para o mesmo produto, não
+          // deixamos uma cópia antiga da nuvem voltar o item para zero.
+          const cloudSeparated = Number(item.separado) || 0;
+          const localSeparated = Number(local?.separado) || 0;
+          return {
+            id: String(item.id),
+            codigo: item.codigo || local?.codigo || "",
+            descricao: item.descricao || local?.descricao || "",
+            quantidade: Number(item.quantidade) || Number(local?.quantidade) || 0,
+            separado: Math.max(cloudSeparated, localSeparated)
+          };
+        });
+
         const full: Separation = {
           id: cloud.id,
           fileName: cloud.arquivoNome || entry.fileName,
           numero: cloud.numero || entry.numero || "",
           cliente: cloud.cliente || entry.cliente || "",
-          items: cloudItems.map((item) => ({
-            id: String(item.id),
-            codigo: item.codigo || "",
-            descricao: item.descricao || "",
-            quantidade: Number(item.quantidade) || 0,
-            separado: Number(item.separado) || 0
-          })),
+          items: cloudMapped,
           createdAt: cloud.criadoEm || entry.createdAt,
-          status: cloud.status || entry.status,
-          totalUnidades:
-            cloud.totalUnidades ?? entry.totalUnidades,
-          totalSeparado:
-            cloud.totalSeparado ?? entry.totalSeparado
+          status:
+            cloud.status === "concluida" || entry.status === "concluida"
+              ? "concluida"
+              : cloud.status || entry.status,
+          totalUnidades: cloudMapped.reduce((s, i) => s + i.quantidade, 0),
+          totalSeparado: cloudMapped.reduce((s, i) => s + i.separado, 0)
         };
+
         localStorage.setItem(
           "listapedidos:separacao-atual",
           JSON.stringify(full)
@@ -322,8 +334,13 @@ export default function HistoricoPage() {
           if (!q) return true;
           return [entry.numero, entry.cliente, entry.fileName].filter(Boolean).some((value) => String(value).toLowerCase().includes(q));
         }).map((entry) => {
-          const total = entry.totalUnidades ?? entry.items.reduce((s, i) => s + i.quantidade, 0);
-          const separated = entry.totalSeparado ?? entry.items.reduce((s, i) => s + i.separado, 0);
+          // Quando há produtos disponíveis, eles são a fonte de verdade do
+          // percentual. Isso evita mostrar 0% quando o resumo antigo do pedido
+          // ainda está com totalSeparado=0.
+          const totalFromItems = entry.items.reduce((s, i) => s + Number(i.quantidade || 0), 0);
+          const separatedFromItems = entry.items.reduce((s, i) => s + Number(i.separado || 0), 0);
+          const total = entry.items.length > 0 ? totalFromItems : (entry.totalUnidades ?? 0);
+          const separated = entry.items.length > 0 ? separatedFromItems : (entry.totalSeparado ?? 0);
           return (
             <article
               className="item-card history-card"
