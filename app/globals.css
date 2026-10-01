@@ -107,3 +107,7 @@ th { background:#f7faf8; font-size:12px; }
 .quantity-input { width:64px; padding:7px 6px; border:1px solid var(--line); border-radius:9px; background:#fff; color:var(--text); font-weight:800; text-align:center; outline:none; }
 .quantity-input:focus { border-color:#9bc9ad; box-shadow:0 0 0 2px #e8f5ed; }
 @media (max-width:700px) { .quantity-value { align-items:flex-start; } .quantity-input { width:72px; } }
+
+.history-order-number { margin:0 0 3px; color:var(--primary); font-size:12px; font-weight:900; letter-spacing:.08em; }
+.history-client { display:block; font-size:17px; margin-bottom:2px; }
+@media (max-width:700px) { .history-client { font-size:16px; } }
