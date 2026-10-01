@@ -39,7 +39,7 @@ function response(
     "access-control-allow-origin": corsOrigin(request, env),
     "access-control-allow-credentials": "true",
     "access-control-allow-headers": "content-type",
-    "access-control-allow-methods": "GET,POST,PATCH,OPTIONS",
+    "access-control-allow-methods": "GET,POST,PATCH,DELETE,OPTIONS",
     "cache-control": "no-store"
   });
 
@@ -500,6 +500,25 @@ export default {
 
       if (url.pathname === "/api/pedidos" && request.method === "POST") {
         return syncOrder(request, env, uid);
+      }
+
+      const orderDeleteMatch = url.pathname.match(
+        /^\\/api\\/pedidos\\/([^/]+)$/
+      );
+
+      if (orderDeleteMatch && request.method === "DELETE") {
+        const orderId = decodeURIComponent(orderDeleteMatch[1]);
+        const deleted = await env.DB.prepare(
+          "DELETE FROM pedidos WHERE id=? AND usuario_id=?"
+        )
+          .bind(orderId, uid)
+          .run();
+
+        if (!deleted.meta.changes) {
+          return response(request, env, { error: "Pedido não encontrado." }, 404);
+        }
+
+        return response(request, env, { ok: true, id: orderId });
       }
 
       const itemMatch = url.pathname.match(
