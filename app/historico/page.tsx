@@ -202,30 +202,55 @@ export default function HistoricoPage() {
   async function openSeparation(entry: Separation) {
     try {
       const cloud = await getOrder(entry.id);
-      const full: Separation = {
-        id: cloud.id,
-        fileName: cloud.arquivoNome,
-        numero: cloud.numero || "",
-        cliente: cloud.cliente || "",
-        items: cloud.items.map((item) => ({
-          id: String(item.id),
-          codigo: item.codigo,
-          descricao: item.descricao,
-          quantidade: Number(item.quantidade) || 0,
-          separado: Number(item.separado) || 0
-        })),
-        createdAt: cloud.criadoEm || entry.createdAt,
-        status: cloud.status
-      };
-      localStorage.setItem("listapedidos:separacao-atual", JSON.stringify(full));
+      const cloudItems = Array.isArray(cloud.items) ? cloud.items : [];
+
+      // Uma restauração de backup pode ter todos os produtos localmente,
+      // enquanto a nuvem ainda possui apenas o resumo do pedido.
+      // Nunca substituímos uma cópia completa por uma resposta sem itens.
+      if (cloudItems.length === 0 && entry.items.length > 0) {
+        localStorage.setItem(
+          "listapedidos:separacao-atual",
+          JSON.stringify(entry)
+        );
+      } else {
+        const full: Separation = {
+          id: cloud.id,
+          fileName: cloud.arquivoNome || entry.fileName,
+          numero: cloud.numero || entry.numero || "",
+          cliente: cloud.cliente || entry.cliente || "",
+          items: cloudItems.map((item) => ({
+            id: String(item.id),
+            codigo: item.codigo || "",
+            descricao: item.descricao || "",
+            quantidade: Number(item.quantidade) || 0,
+            separado: Number(item.separado) || 0
+          })),
+          createdAt: cloud.criadoEm || entry.createdAt,
+          status: cloud.status || entry.status,
+          totalUnidades:
+            cloud.totalUnidades ?? entry.totalUnidades,
+          totalSeparado:
+            cloud.totalSeparado ?? entry.totalSeparado
+        };
+        localStorage.setItem(
+          "listapedidos:separacao-atual",
+          JSON.stringify(full)
+        );
+      }
     } catch {
       // Se estiver offline, só usamos a cópia local quando ela realmente contém itens.
       if (!entry.items.length) {
-        setMessage("Não foi possível abrir este pedido agora. Conecte-se à internet para carregar os itens salvos na nuvem.");
+        setMessage(
+          "Não foi possível abrir este pedido agora. Conecte-se à internet para carregar os itens salvos na nuvem."
+        );
         return;
       }
-      localStorage.setItem("listapedidos:separacao-atual", JSON.stringify(entry));
+      localStorage.setItem(
+        "listapedidos:separacao-atual",
+        JSON.stringify(entry)
+      );
     }
+
     window.location.href = "/listapedidos/separacao/atual/";
   }
 
