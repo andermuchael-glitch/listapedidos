@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { History, Download, Upload, Trash2, FolderOpen } from "lucide-react";
-import { deleteOrder, listOrders } from "../../lib/api";
+import { deleteAllOrders, deleteOrder, listOrders } from "../../lib/api";
 
 type Item = { id: string; codigo: string; descricao: string; quantidade: number; separado: number };
 type Separation = { id: string; fileName: string; numero?: string; cliente?: string; items: Item[]; createdAt: string; status?: string; finishedAt?: string; archivedAt?: string; totalUnidades?: number; totalSeparado?: number };
@@ -97,8 +97,18 @@ export default function HistoricoPage() {
     setHistory(next);
   }
 
-  function clearHistory() {
+  async function clearHistory() {
     if (!confirm("Apagar todo o histórico? O backup não será afetado.")) return;
+    try {
+      await deleteAllOrders();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "";
+      if (message !== "Não autenticado.") {
+        setMessage(message || "Não foi possível limpar o histórico na nuvem.");
+        return;
+      }
+    }
+
     localStorage.removeItem("listapedidos:historico");
     setHistory([]);
   }
