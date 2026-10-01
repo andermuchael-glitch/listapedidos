@@ -88,8 +88,11 @@ export default function HistoricoPage() {
     try {
       await deleteOrder(id);
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "Não foi possível excluir o pedido na nuvem.");
-      return;
+      const message = error instanceof Error ? error.message : "";
+      if (message !== "Não autenticado.") {
+        setMessage(message || "Não foi possível excluir o pedido na nuvem.");
+        return;
+      }
     }
 
     const next = history.filter((item) => item.id !== id);
