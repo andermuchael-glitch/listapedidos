@@ -74,40 +74,81 @@ export default function SeparacaoAtualPage() {
         if (localData?.id) {
           const cloud = await getOrder(localData.id);
           if (!cancelled) {
+            const localById = new Map(
+              (localData.items || []).map((item) => [String(item.id), item])
+            );
+
             const merged: Separation = {
               id: cloud.id,
-              fileName: cloud.arquivoNome,
-              numero: cloud.numero || "",
-              cliente: cloud.cliente || "",
-              items: cloud.items.map((item) => ({
-                id: String(item.id),
-                codigo: item.codigo,
-                descricao: item.descricao,
-                quantidade: Number(item.quantidade) || 0,
-                separado: Number(item.separado) || 0
-              })),
+              fileName: cloud.arquivoNome || localData.fileName,
+              numero: cloud.numero || localData.numero || "",
+              cliente: cloud.cliente || localData.cliente || "",
+              items: cloud.items.map((item) => {
+                const local = localById.get(String(item.id));
+                return {
+                  id: String(item.id),
+                  codigo: item.codigo || local?.codigo || "",
+                  descricao: item.descricao || local?.descricao || "",
+                  quantidade:
+                    Number(item.quantidade) ||
+                    Number(local?.quantidade) ||
+                    0,
+                  // Nunca reduz o progresso local por causa de uma resposta
+                  // antiga da nuvem.
+                  separado: Math.max(
+                    Number(item.separado) || 0,
+                    Number(local?.separado) || 0
+                  )
+                };
+              }),
               createdAt: cloud.criadoEm || localData.createdAt,
-              status: cloud.status
+              status:
+                cloud.status === "concluida" || localData.status === "concluida"
+                  ? "concluida"
+                  : cloud.status || localData.status
             };
             setData(merged);
             localStorage.setItem("listapedidos:separacao-atual", JSON.stringify(merged));
             await retryPendingSync(merged.id);
             try {
               const refreshed = await getOrder(merged.id);
+              const currentLocal = JSON.parse(
+                localStorage.getItem("listapedidos:separacao-atual") || "null"
+              ) as Separation | null;
+              const currentById = new Map(
+                (currentLocal?.items || merged.items).map((item) => [
+                  String(item.id),
+                  item
+                ])
+              );
+
               const synced: Separation = {
                 id: refreshed.id,
-                fileName: refreshed.arquivoNome,
-                numero: refreshed.numero || "",
-                cliente: refreshed.cliente || "",
-                items: refreshed.items.map((item) => ({
-                  id: String(item.id),
-                  codigo: item.codigo,
-                  descricao: item.descricao,
-                  quantidade: Number(item.quantidade) || 0,
-                  separado: Number(item.separado) || 0
-                })),
+                fileName: refreshed.arquivoNome || merged.fileName,
+                numero: refreshed.numero || merged.numero || "",
+                cliente: refreshed.cliente || merged.cliente || "",
+                items: refreshed.items.map((item) => {
+                  const local = currentById.get(String(item.id));
+                  return {
+                    id: String(item.id),
+                    codigo: item.codigo || local?.codigo || "",
+                    descricao: item.descricao || local?.descricao || "",
+                    quantidade:
+                      Number(item.quantidade) ||
+                      Number(local?.quantidade) ||
+                      0,
+                    separado: Math.max(
+                      Number(item.separado) || 0,
+                      Number(local?.separado) || 0
+                    )
+                  };
+                }),
                 createdAt: refreshed.criadoEm || merged.createdAt,
-                status: refreshed.status
+                status:
+                  refreshed.status === "concluida" ||
+                  currentLocal?.status === "concluida"
+                    ? "concluida"
+                    : refreshed.status || currentLocal?.status || merged.status
               };
               if (!cancelled) {
                 setData(synced);
