@@ -26,20 +26,53 @@ export default function HistoricoPage() {
         // não deixe a resposta antiga da nuvem sobrescrever o backup recém-restaurado.
         if (restoreGeneration.current !== generationAtStart) return;
 
-        const cloudHistory: Separation[] = orders.map((order) => ({
-          id: order.id,
-          fileName: order.arquivoNome,
-          numero: order.numero || "",
-          cliente: order.cliente || "",
-          items: [],
-          createdAt: order.criadoEm || new Date().toISOString(),
-          status: order.status,
-          totalUnidades: order.totalUnidades,
-          totalSeparado: order.totalSeparado
-        })) as Separation[];
+        const currentLocal = JSON.parse(
+          localStorage.getItem("listapedidos:historico") || "[]"
+        ) as Separation[];
+
+        const localMap = new Map(
+          currentLocal.map((entry) => [entry.id, entry])
+        );
+
+        const cloudHistory: Separation[] = orders.map((order) => {
+          const local = localMap.get(order.id);
+
+          // A cópia local é a fonte de verdade durante a restauração/backup.
+          // A lista da nuvem pode ter apenas o resumo e, em uma sincronização
+          // incompleta, retornar totalSeparado=0 mesmo que o backup tenha 100%.
+          return {
+            id: order.id,
+            fileName: local?.fileName || order.arquivoNome,
+            numero: local?.numero || order.numero || "",
+            cliente: local?.cliente || order.cliente || "",
+            items: local?.items || [],
+            createdAt:
+              local?.createdAt ||
+              order.criadoEm ||
+              new Date().toISOString(),
+            status: local?.status || order.status,
+            totalUnidades:
+              local?.totalUnidades ??
+              order.totalUnidades,
+            totalSeparado:
+              local?.totalSeparado ??
+              order.totalSeparado ??
+              0
+          };
+        });
+
+        // Mantém pedidos restaurados que ainda não existem na nuvem.
+        for (const local of currentLocal) {
+          if (!cloudHistory.some((entry) => entry.id === local.id)) {
+            cloudHistory.push(local);
+          }
+        }
 
         setHistory(cloudHistory);
-        localStorage.setItem("listapedidos:historico", JSON.stringify(cloudHistory));
+        localStorage.setItem(
+          "listapedidos:historico",
+          JSON.stringify(cloudHistory)
+        );
       })
       .catch(() => {
         // Sem sessão ou internet: mantém o histórico local.
