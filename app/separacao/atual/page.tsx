@@ -8,7 +8,9 @@ import { getOrder, listOrders, saveOrder, updateItemSeparated } from "../../../l
 type Item = { id: string; codigo: string; descricao: string; quantidade: number; separado: number };
 type Separation = { id: string; fileName: string; numero: string; cliente: string; items: Item[]; createdAt: string; status?: string; finishedAt?: string };
 type PendingSync = { orderId: string; itemId: string; separado: number };
+type PendingOrder = Separation;
 const PENDING_SYNC_KEY = "listapedidos:sync-pendente";
+const PENDING_ORDERS_KEY = "listapedidos:pedidos-pendentes-nuvem";
 
 function readPendingSync(): PendingSync[] {
   try {
@@ -37,6 +39,47 @@ function removePendingSync(orderId: string, itemId: string) {
       (item) => !(item.orderId === orderId && item.itemId === itemId)
     )
   );
+}
+
+function readPendingOrders(): PendingOrder[] {
+  try {
+    const value = JSON.parse(localStorage.getItem(PENDING_ORDERS_KEY) || "[]");
+    return Array.isArray(value) ? value : [];
+  } catch {
+    return [];
+  }
+}
+
+function queuePendingOrder(order: PendingOrder) {
+  const pending = readPendingOrders().filter((item) => item.id !== order.id);
+  pending.push(order);
+  localStorage.setItem(PENDING_ORDERS_KEY, JSON.stringify(pending));
+}
+
+function removePendingOrder(orderId: string) {
+  localStorage.setItem(
+    PENDING_ORDERS_KEY,
+    JSON.stringify(readPendingOrders().filter((item) => item.id !== orderId))
+  );
+}
+
+async function retryPendingOrders(orderId?: string) {
+  const pending = readPendingOrders().filter((item) => !orderId || item.id === orderId);
+  for (const order of pending) {
+    try {
+      await saveOrder({
+        id: order.id,
+        numero: order.numero,
+        cliente: order.cliente,
+        arquivoNome: order.fileName,
+        status: order.status || "em_andamento",
+        items: order.items
+      });
+      removePendingOrder(order.id);
+    } catch {
+      // Mantém o pedido na fila para a próxima tentativa.
+    }
+  }
 }
 
 async function retryPendingSync(orderId: string) {
@@ -72,6 +115,9 @@ export default function SeparacaoAtualPage() {
 
       try {
         if (localData?.id) {
+          // Primeiro tenta enviar uma cópia completa pendente. Isso é importante
+          // quando o último PATCH ou o botão Finalizar falhou por conexão.
+          await retryPendingOrders(localData.id);
           const cloud = await getOrder(localData.id);
           if (!cancelled) {
             // Se a nuvem ainda não possui os itens, o backup/local é a fonte
@@ -168,6 +214,7 @@ export default function SeparacaoAtualPage() {
           return;
         }
 
+        await retryPendingOrders();
         const orders = await listOrders();
         if (orders.length) {
           const cloud = await getOrder(orders[0].id);
@@ -386,6 +433,14 @@ export default function SeparacaoAtualPage() {
           <div><strong>Separação completa</strong><span>Todos os {total} itens foram separados.</span></div>
           <button className="primary-button" onClick={async () => {
             const finished = { ...data, finishedAt: new Date().toISOString(), status: "concluida" };
+            const history = JSON.parse(localStorage.getItem("listapedidos:historico") || "[]");
+            const withoutCurrent = history.filter((entry: Separation) => entry.id !== finished.id);
+            withoutCurrent.unshift(finished);
+            localStorage.setItem("listapedidos:historico", JSON.stringify(withoutCurrent.slice(0, 100)));
+            localStorage.setItem("listapedidos:separacao-concluida", JSON.stringify(finished));
+            localStorage.setItem("listapedidos:separacao-atual", JSON.stringify(finished));
+            setData(finished);
+
             try {
               await saveOrder({
                 id: finished.id,
@@ -395,17 +450,15 @@ export default function SeparacaoAtualPage() {
                 status: "concluida",
                 items: finished.items
               });
-              const history = JSON.parse(localStorage.getItem("listapedidos:historico") || "[]");
-              const withoutCurrent = history.filter((entry: Separation) => entry.id !== finished.id);
-              withoutCurrent.unshift(finished);
-              localStorage.setItem("listapedidos:historico", JSON.stringify(withoutCurrent.slice(0, 100)));
-              localStorage.setItem("listapedidos:separacao-concluida", JSON.stringify(finished));
-              localStorage.setItem("listapedidos:separacao-atual", JSON.stringify(finished));
-              setData(finished);
+              removePendingOrder(finished.id);
               setSyncError("");
               alert("Separação finalizada e salva no histórico e na nuvem.");
             } catch (error) {
-              setSyncError(error instanceof Error ? error.message : "Não foi possível finalizar na nuvem.");
+              // Nunca perde a separação local só porque a nuvem falhou.
+              queuePendingOrder(finished);
+              setSyncError(
+                "Não foi possível sincronizar agora. A separação foi salva neste dispositivo e será reenviada automaticamente."
+              );
             }
           }}>Finalizar</button>
         </section>
