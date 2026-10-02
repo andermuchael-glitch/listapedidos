@@ -96,7 +96,6 @@ function syncFullOrder(order: Separation): Promise<boolean> {
       } catch (error) {
         // A cópia permanece na fila. Nunca substituímos o estado local por
         // uma resposta antiga da nuvem quando a gravação falha.
-        setTimeout(() => setSyncError(syncErrorMessage(error)), 0);
         return false;
       }
     });
