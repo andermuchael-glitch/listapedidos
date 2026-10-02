@@ -728,14 +728,26 @@ export default function NovaSeparacaoPage() {
         status: separation.status,
         items: separation.items
       });
-    } catch (syncError) {
-      setCreating(false);
-      setError(
-        syncError instanceof Error
-          ? `O pedido não foi salvo na nuvem: ${syncError.message}`
-          : "O pedido não foi salvo na nuvem."
-      );
-      return;
+    } catch {
+      // A criação da separação não pode ser bloqueada por uma falha momentânea
+      // de rede/CORS. Mantemos o pedido completo no dispositivo e colocamos
+      // uma cópia na fila para sincronização automática com o D1.
+      try {
+        const pending = JSON.parse(
+          localStorage.getItem("listapedidos:pedidos-pendentes-nuvem") || "[]"
+        );
+        const withoutSameId = Array.isArray(pending)
+          ? pending.filter((entry: { id?: string }) => entry.id !== separation.id)
+          : [];
+
+        withoutSameId.unshift(separation);
+        localStorage.setItem(
+          "listapedidos:pedidos-pendentes-nuvem",
+          JSON.stringify(withoutSameId.slice(0, 100))
+        );
+      } catch {
+        // Mesmo sem a fila, a separação atual continuará salva no dispositivo.
+      }
     }
 
     localStorage.setItem(
