@@ -82,7 +82,9 @@ export default function HistoricoPage() {
 
   useEffect(() => {
     const localHistory = JSON.parse(localStorage.getItem("listapedidos:historico") || "[]");
-    const normalizedLocal = mergeHistory(localHistory);\n    setHistory(normalizedLocal);\n    localStorage.setItem("listapedidos:historico", JSON.stringify(normalizedLocal));
+    const normalizedLocal = mergeHistory(localHistory);
+    setHistory(normalizedLocal);
+    localStorage.setItem("listapedidos:historico", JSON.stringify(normalizedLocal));
 
     const generationAtStart = restoreGeneration.current;
 
