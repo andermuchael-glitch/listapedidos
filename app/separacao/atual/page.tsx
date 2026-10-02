@@ -11,6 +11,17 @@ type PendingOrder = Separation;
 const PENDING_ORDERS_KEY = "listapedidos:pedidos-pendentes-nuvem";
 const syncChains = new Map<string, Promise<boolean>>();
 
+function syncErrorMessage(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error || "Erro desconhecido");
+  if (/failed to fetch/i.test(message)) {
+    return "Falha de comunicação com a nuvem (Failed to fetch). Verifique a conexão e a sessão de login."; 
+  }
+  if (/não autenticado|unauthorized|401/i.test(message)) {
+    return "A sessão da nuvem expirou. Faça login novamente para sincronizar."; 
+  }
+  return message || "Não foi possível sincronizar agora.";
+}
+
 function orderIdentity(order: Separation) {
   return String(order.id || `${order.numero || ""}|${order.fileName || ""}`);
 }
@@ -57,7 +68,7 @@ function syncFullOrder(order: Separation): Promise<boolean> {
         });
         removePendingOrder(order.id, snapshot);
         return true;
-      } catch {
+      } catch (error) {
         // A cópia permanece na fila. Uma alteração mais nova para o mesmo
         // pedido nunca será apagada por uma resposta antiga.
         return false;
@@ -371,7 +382,7 @@ export default function SeparacaoAtualPage() {
     // nunca sejam gravadas fora de ordem no D1.
     syncFullOrder(nextData).then((ok) => {
       if (ok) setSyncError("");
-      else setSyncError("Não foi possível sincronizar agora.");
+      else setSyncError("Não foi possível sincronizar agora. A tentativa ficou na fila deste dispositivo.");
     });
   }
 
@@ -539,7 +550,7 @@ export default function SeparacaoAtualPage() {
               // Nunca perde a separação local só porque a nuvem falhou.
               queuePendingOrder(finished);
               setSyncError(
-                "Não foi possível sincronizar agora. A separação foi salva neste dispositivo e será reenviada automaticamente."
+                `${syncErrorMessage(error)} A separação foi salva neste dispositivo e será reenviada automaticamente.`
               );
             }
           }}>Finalizar</button>
