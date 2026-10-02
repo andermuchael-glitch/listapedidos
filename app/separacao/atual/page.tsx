@@ -63,29 +63,40 @@ function queuePendingOrder(order: PendingOrder) {
   localStorage.setItem(PENDING_ORDERS_KEY, JSON.stringify(pending));
 }
 
-function removePendingOrder(orderId: string) {
-  localStorage.setItem(
-    PENDING_ORDERS_KEY,
-    JSON.stringify(readPendingOrders().filter((item) => item.id !== orderId))
-  );
+function removePendingOrder(orderId: string, expectedSerialized?: string) {
+  const pending = readPendingOrders();
+  const next = expectedSerialized
+    ? pending.filter((item) => item.id !== orderId || JSON.stringify(item) !== expectedSerialized)
+    : pending.filter((item) => item.id !== orderId);
+  localStorage.setItem(PENDING_ORDERS_KEY, JSON.stringify(next));
+}
+
+async function syncFullOrder(order: Separation) {
+  const snapshot = JSON.stringify(order);
+  queuePendingOrder(order);
+
+  try {
+    await saveOrder({
+      id: order.id,
+      numero: order.numero,
+      cliente: order.cliente,
+      arquivoNome: order.fileName,
+      status: order.status || "em_andamento",
+      items: order.items
+    });
+    // Só remove se ninguém tiver alterado o pedido enquanto a requisição estava
+    // em andamento. Assim uma resposta antiga nunca apaga uma alteração nova.
+    removePendingOrder(order.id, snapshot);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 async function retryPendingOrders(orderId?: string) {
   const pending = readPendingOrders().filter((item) => !orderId || item.id === orderId);
   for (const order of pending) {
-    try {
-      await saveOrder({
-        id: order.id,
-        numero: order.numero,
-        cliente: order.cliente,
-        arquivoNome: order.fileName,
-        status: order.status || "em_andamento",
-        items: order.items
-      });
-      removePendingOrder(order.id);
-    } catch {
-      // Mantém o pedido na fila para a próxima tentativa.
-    }
+    await syncFullOrder(order);
   }
 }
 
@@ -354,14 +365,12 @@ export default function SeparacaoAtualPage() {
     const nextData = { ...data, items };
     save(nextData);
 
-    if (items.length > 0 && items.every((item) => item.separado >= item.quantidade)) {
-      queuePendingOrder({
-        ...nextData,
-        status: "concluida",
-        finishedAt: nextData.finishedAt || new Date().toISOString()
-      });
-    }
-
+    // O pedido inteiro entra na fila a cada alteração. O PATCH individual
+    // continua como compatibilidade, mas nunca é a única forma de sincronizar.
+    syncFullOrder(nextData).then((ok) => {
+      if (ok) setSyncError("");
+      else setSyncError("Não foi possível sincronizar agora.");
+    });
     syncItem(id, nextValue);
   }
 
@@ -380,14 +389,12 @@ export default function SeparacaoAtualPage() {
     const nextData = { ...data, items };
     save(nextData);
 
-    if (items.length > 0 && items.every((item) => item.separado >= item.quantidade)) {
-      queuePendingOrder({
-        ...nextData,
-        status: "concluida",
-        finishedAt: nextData.finishedAt || new Date().toISOString()
-      });
-    }
-
+    // O pedido inteiro entra na fila a cada alteração. O PATCH individual
+    // continua como compatibilidade, mas nunca é a única forma de sincronizar.
+    syncFullOrder(nextData).then((ok) => {
+      if (ok) setSyncError("");
+      else setSyncError("Não foi possível sincronizar agora.");
+    });
     syncItem(id, nextValue);
   }
 
