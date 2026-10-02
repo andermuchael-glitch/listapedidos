@@ -12,6 +12,12 @@ type PendingOrder = Separation;
 const PENDING_SYNC_KEY = "listapedidos:sync-pendente";
 const PENDING_ORDERS_KEY = "listapedidos:pedidos-pendentes-nuvem";
 
+function orderIdentity(entry: Pick<Separation, "id" | "numero" | "fileName">) {
+  const numero = String(entry.numero || "").trim();
+  if (numero) return `numero:${numero}`;
+  return `arquivo:${String(entry.fileName || "").trim().toLowerCase()}`;
+}
+
 function readPendingSync(): PendingSync[] {
   try {
     const value = JSON.parse(localStorage.getItem(PENDING_SYNC_KEY) || "[]");
@@ -51,7 +57,7 @@ function readPendingOrders(): PendingOrder[] {
 }
 
 function queuePendingOrder(order: PendingOrder) {
-  const pending = readPendingOrders().filter((item) => item.id !== order.id);
+  const key = orderIdentity(order);\n  const pending = readPendingOrders().filter((item) => orderIdentity(item) !== key);
   pending.push(order);
   localStorage.setItem(PENDING_ORDERS_KEY, JSON.stringify(pending));
 }
@@ -502,7 +508,7 @@ export default function SeparacaoAtualPage() {
           <button className="primary-button" onClick={async () => {
             const finished = { ...data, finishedAt: new Date().toISOString(), status: "concluida" };
             const history = JSON.parse(localStorage.getItem("listapedidos:historico") || "[]");
-            const withoutCurrent = history.filter((entry: Separation) => entry.id !== finished.id);
+            const finishedKey = orderIdentity(finished);\n            const withoutCurrent = history.filter((entry: Separation) => orderIdentity(entry) !== finishedKey);
             withoutCurrent.unshift(finished);
             localStorage.setItem("listapedidos:historico", JSON.stringify(withoutCurrent.slice(0, 100)));
             localStorage.setItem("listapedidos:separacao-concluida", JSON.stringify(finished));
