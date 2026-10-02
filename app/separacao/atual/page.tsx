@@ -11,6 +11,10 @@ type PendingOrder = Separation;
 const PENDING_ORDERS_KEY = "listapedidos:pedidos-pendentes-nuvem";
 const syncChains = new Map<string, Promise<boolean>>();
 
+function orderIdentity(order: Separation) {
+  return String(order.id || `${order.numero || ""}|${order.fileName || ""}`);
+}
+
 function readPendingOrders(): PendingOrder[] {
   try {
     const value = JSON.parse(localStorage.getItem(PENDING_ORDERS_KEY) || "[]");
