@@ -172,14 +172,52 @@ async function syncOrder(request: Request, env: Env, uid: string) {
     return response(request, env, { error: "Pedido não pertence ao usuário autenticado." }, 403);
   }
 
-  const items = body.items.map((item, index) => ({
+  // Proteção contra o problema observado no celular/computador:
+  // uma cópia antiga ou ainda não carregada não pode substituir no D1 um
+  // pedido que já possui produtos. O progresso também é monotônico: nunca
+  // reduzimos a quantidade separada que já foi gravada.
+  let currentItems: Array<{
+    id: string;
+    codigo: string;
+    descricao: string;
+    quantidade: number;
+    separado: number;
+    ordem: number;
+  }> = [];
+
+  if (existing) {
+    const current = await env.DB.prepare(
+      "SELECT id,codigo,descricao,quantidade,separado,ordem FROM itens_pedido WHERE pedido_id=? ORDER BY ordem"
+    )
+      .bind(body.id)
+      .all();
+
+    currentItems = (current.results || []).map((item: any) => ({
+      id: String(item.id),
+      codigo: String(item.codigo || ""),
+      descricao: String(item.descricao || ""),
+      quantidade: Math.max(0, Math.floor(Number(item.quantidade) || 0)),
+      separado: Math.max(0, Math.floor(Number(item.separado) || 0)),
+      ordem: Number(item.ordem) || 0
+    }));
+
+    if (currentItems.length > 0 && body.items.length === 0) {
+      return response(
+        request,
+        env,
+        {
+          error: "Atualização ignorada: o dispositivo enviou um pedido sem itens, mas o D1 já possui produtos."
+        },
+        409
+      );
+    }
+  }
+
+  const incoming = body.items.map((item, index) => ({
     id: String(item.id),
     codigo: String(item.codigo || ""),
     descricao: String(item.descricao || ""),
-    quantidade: Math.max(
-      0,
-      Math.floor(Number(item.quantidade) || 0)
-    ),
+    quantidade: Math.max(0, Math.floor(Number(item.quantidade) || 0)),
     separado: Math.max(
       0,
       Math.min(
@@ -190,6 +228,29 @@ async function syncOrder(request: Request, env: Env, uid: string) {
     ordem: index
   }));
 
+  const incomingById = new Map(incoming.map((item) => [item.id, item]));
+  const currentById = new Map(currentItems.map((item) => [item.id, item]));
+
+  const items = [
+    ...currentItems.map((oldItem) => {
+      const next = incomingById.get(oldItem.id);
+      if (!next) return oldItem;
+
+      return {
+        ...next,
+        codigo: next.codigo || oldItem.codigo,
+        descricao: next.descricao || oldItem.descricao,
+        quantidade: Math.max(oldItem.quantidade, next.quantidade),
+        separado: Math.min(
+          Math.max(oldItem.separado, next.separado),
+          Math.max(oldItem.quantidade, next.quantidade)
+        ),
+        ordem: oldItem.ordem
+      };
+    }),
+    ...incoming.filter((item) => !currentById.has(item.id))
+  ].map((item, index) => ({ ...item, ordem: index }));
+
   const total = items.reduce((sum, item) => sum + item.quantidade, 0);
   const separated = items.reduce((sum, item) => sum + item.separado, 0);
   const status =
@@ -197,20 +258,20 @@ async function syncOrder(request: Request, env: Env, uid: string) {
       ? "concluida"
       : "em_andamento";
 
-  await env.DB.prepare(
-    `INSERT INTO pedidos
-      (id, usuario_id, numero_pedido, cliente, arquivo_nome, status, total_itens, total_unidades, atualizado_em)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
-     ON CONFLICT(id) DO UPDATE SET
-       numero_pedido=excluded.numero_pedido,
-       cliente=excluded.cliente,
-       arquivo_nome=excluded.arquivo_nome,
-       status=excluded.status,
-       total_itens=excluded.total_itens,
-       total_unidades=excluded.total_unidades,
-       atualizado_em=datetime('now')`
-  )
-    .bind(
+  const statements = [
+    env.DB.prepare(
+      `INSERT INTO pedidos
+        (id, usuario_id, numero_pedido, cliente, arquivo_nome, status, total_itens, total_unidades, atualizado_em)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+       ON CONFLICT(id) DO UPDATE SET
+         numero_pedido=excluded.numero_pedido,
+         cliente=excluded.cliente,
+         arquivo_nome=excluded.arquivo_nome,
+         status=excluded.status,
+         total_itens=excluded.total_itens,
+         total_unidades=excluded.total_unidades,
+         atualizado_em=datetime('now')`
+    ).bind(
       body.id,
       uid,
       body.numero || "",
@@ -219,32 +280,28 @@ async function syncOrder(request: Request, env: Env, uid: string) {
       status,
       items.length,
       total
-    )
-    .run();
-
-  await env.DB.prepare(
-    "DELETE FROM itens_pedido WHERE pedido_id = ?"
-  )
-    .bind(body.id)
-    .run();
-
-  if (items.length) {
-    await env.DB.batch(
-      items.map((item) =>
-        env.DB.prepare(
-          "INSERT INTO itens_pedido (id,pedido_id,codigo,descricao,quantidade,separado,ordem) VALUES (?,?,?,?,?,?,?)"
-        ).bind(
-          item.id,
-          body.id,
-          item.codigo,
-          item.descricao,
-          item.quantidade,
-          item.separado,
-          item.ordem
-        )
+    ),
+    env.DB.prepare(
+      "DELETE FROM itens_pedido WHERE pedido_id = ?"
+    ).bind(body.id),
+    ...items.map((item) =>
+      env.DB.prepare(
+        "INSERT INTO itens_pedido (id,pedido_id,codigo,descricao,quantidade,separado,ordem) VALUES (?,?,?,?,?,?,?)"
+      ).bind(
+        item.id,
+        body.id,
+        item.codigo,
+        item.descricao,
+        item.quantidade,
+        item.separado,
+        item.ordem
       )
-    );
-  }
+    )
+  ];
+
+  // D1 batch é transacional: ou o pedido e seus itens entram juntos, ou
+  // nenhuma parte da atualização é aplicada.
+  await env.DB.batch(statements);
 
   return response(request, env, {
     ok: true,
