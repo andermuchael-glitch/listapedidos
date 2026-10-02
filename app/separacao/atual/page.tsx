@@ -417,9 +417,9 @@ export default function SeparacaoAtualPage() {
           items: mergedItems,
           createdAt: cloud.criadoEm || current.createdAt,
           status:
-            local.status === "concluida" || cloud.status === "concluida"
+            current.status === "concluida" || cloud.status === "concluida"
               ? "concluida"
-              : cloud.status || local.status || "em_andamento"
+              : cloud.status || current.status || "em_andamento"
         };
 
         // Se o dispositivo possui dados mais recentes/completos, reenviamos
