@@ -74,7 +74,7 @@ function removePendingOrder(orderId: string, expectedSerialized?: string) {
   localStorage.setItem(PENDING_ORDERS_KEY, JSON.stringify(next));
 }
 
-function syncFullOrder(order: Separation): Promise<boolean> {
+function syncFullOrder(order: Separation, onError?: (error: unknown) => void): Promise<boolean> {
   queuePendingOrder(order);
 
   const previous = syncChains.get(order.id) || Promise.resolve(true);
@@ -96,6 +96,7 @@ function syncFullOrder(order: Separation): Promise<boolean> {
       } catch (error) {
         // A cópia permanece na fila. Nunca substituímos o estado local por
         // uma resposta antiga da nuvem quando a gravação falha.
+        onError?.(error);
         return false;
       }
     });
@@ -462,9 +463,8 @@ export default function SeparacaoAtualPage() {
 
     // Uma única fila por pedido garante que duas alterações rápidas no celular
     // nunca sejam gravadas fora de ordem no D1.
-    syncFullOrder(nextData).then((ok) => {
+    syncFullOrder(nextData, (error) => setSyncError(syncErrorMessage(error))).then((ok) => {
       if (ok) setSyncError("");
-      else setSyncError("Não foi possível sincronizar agora. A tentativa ficou na fila deste dispositivo.");
     });
   }
 
@@ -484,9 +484,8 @@ export default function SeparacaoAtualPage() {
     save(nextData);
 
     // A mesma fila serializada é usada para a edição digitada.
-    syncFullOrder(nextData).then((ok) => {
+    syncFullOrder(nextData, (error) => setSyncError(syncErrorMessage(error))).then((ok) => {
       if (ok) setSyncError("");
-      else setSyncError("Não foi possível sincronizar agora.");
     });
   }
 
