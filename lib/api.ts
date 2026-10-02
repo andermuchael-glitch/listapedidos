@@ -76,21 +76,31 @@ export async function getCurrentUser() {
 }
 
 export async function login(email: string, senha: string) {
-  return request<{ ok: boolean; user: ApiUser }>("/api/auth/login", {
+  const result = await request<{ ok: boolean; user: ApiUser; sessionToken?: string }>("/api/auth/login", {
     method: "POST",
     body: JSON.stringify({ email, senha })
   });
+  if (typeof window !== "undefined" && result.sessionToken) {
+    localStorage.setItem("listapedidos:session-token", result.sessionToken);
+  }
+  return result;
 }
 
 export async function register(nome: string, email: string, senha: string) {
-  return request<{ ok: boolean; user: ApiUser }>("/api/auth/register", {
+  const result = await request<{ ok: boolean; user: ApiUser; sessionToken?: string }>("/api/auth/register", {
     method: "POST",
     body: JSON.stringify({ nome, email, senha })
   });
+  if (typeof window !== "undefined" && result.sessionToken) {
+    localStorage.setItem("listapedidos:session-token", result.sessionToken);
+  }
+  return result;
 }
 
 export async function logout() {
-  return request<{ ok: boolean }>("/api/auth/logout", { method: "POST" });
+  const result = await request<{ ok: boolean }>("/api/auth/logout", { method: "POST" });
+  if (typeof window !== "undefined") localStorage.removeItem("listapedidos:session-token");
+  return result;
 }
 
 export async function listOrders() {
