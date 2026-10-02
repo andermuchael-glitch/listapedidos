@@ -275,19 +275,48 @@ export default function SeparacaoAtualPage() {
     const total = next.items.reduce((sum, item) => sum + item.quantidade, 0);
     const separated = next.items.reduce((sum, item) => sum + item.separado, 0);
     const status = total > 0 && separated >= total ? "concluida" : "em_andamento";
-    const normalized = { ...next, status };
+    const normalized: Separation = {
+      ...next,
+      status,
+      ...(status === "concluida" && !next.finishedAt
+        ? { finishedAt: new Date().toISOString() }
+        : {})
+    };
 
     setData(normalized);
     localStorage.setItem("listapedidos:separacao-atual", JSON.stringify(normalized));
 
-    // Mantém também a cópia do histórico sincronizada com a alteração.
-    // Assim, ao sair e reabrir uma separação, ela volta exatamente ao último estado salvo.
+    // O pedido passa automaticamente para o histórico assim que chega a 100%.
+    // Se ainda estiver em andamento, apenas atualiza uma cópia que já exista no histórico.
     try {
       const history = JSON.parse(localStorage.getItem("listapedidos:historico") || "[]");
-      const updatedHistory = history.map((entry: Separation) =>
-        entry.id === normalized.id ? { ...entry, ...normalized } : entry
+      const existingIndex = history.findIndex(
+        (entry: Separation) => entry.id === normalized.id
       );
-      localStorage.setItem("listapedidos:historico", JSON.stringify(updatedHistory));
+
+      if (normalized.status === "concluida") {
+        const archived = {
+          ...normalized,
+          archivedAt:
+            history[existingIndex]?.archivedAt || new Date().toISOString(),
+          totalUnidades: total,
+          totalSeparado: separated
+        };
+
+        if (existingIndex >= 0) {
+          history[existingIndex] = { ...history[existingIndex], ...archived };
+        } else {
+          history.unshift(archived);
+        }
+
+        localStorage.setItem(
+          "listapedidos:historico",
+          JSON.stringify(history.slice(0, 100))
+        );
+      } else if (existingIndex >= 0) {
+        history[existingIndex] = { ...history[existingIndex], ...normalized };
+        localStorage.setItem("listapedidos:historico", JSON.stringify(history));
+      }
     } catch {
       // O estado atual continua salvo mesmo se houver problema no histórico.
     }
@@ -315,7 +344,17 @@ export default function SeparacaoAtualPage() {
     const items = data.items.map((item) =>
       item.id === id ? { ...item, separado: nextValue } : item
     );
-    save({ ...data, items });
+    const nextData = { ...data, items };
+    save(nextData);
+
+    if (items.length > 0 && items.every((item) => item.separado >= item.quantidade)) {
+      queuePendingOrder({
+        ...nextData,
+        status: "concluida",
+        finishedAt: nextData.finishedAt || new Date().toISOString()
+      });
+    }
+
     syncItem(id, nextValue);
   }
 
@@ -331,7 +370,17 @@ export default function SeparacaoAtualPage() {
     const items = data.items.map((current) =>
       current.id === id ? { ...current, separado: nextValue } : current
     );
-    save({ ...data, items });
+    const nextData = { ...data, items };
+    save(nextData);
+
+    if (items.length > 0 && items.every((item) => item.separado >= item.quantidade)) {
+      queuePendingOrder({
+        ...nextData,
+        status: "concluida",
+        finishedAt: nextData.finishedAt || new Date().toISOString()
+      });
+    }
+
     syncItem(id, nextValue);
   }
 
