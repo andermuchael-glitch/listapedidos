@@ -335,6 +335,57 @@ export default function SeparacaoAtualPage() {
       if (document.visibilityState === "visible") retry();
     };
 
+    // D1 é a fonte de verdade. O localStorage funciona apenas como cache/offline.
+    // Enquanto o pedido estiver sincronizado, todos os dispositivos consultam a
+    // mesma versão na nuvem em intervalos curtos, permitindo atualização quase
+    // em tempo real sem depender de qual aparelho abriu primeiro.
+    const cloudRefresh = window.setInterval(async () => {
+      if (document.visibilityState !== "visible") return;
+      const currentRaw = localStorage.getItem("listapedidos:separacao-atual");
+      if (!currentRaw) return;
+
+      let current: Separation | null = null;
+      try { current = JSON.parse(currentRaw) as Separation; } catch { return; }
+      if (!current?.id) return;
+
+      // Se ainda houver uma gravação pendente, primeiro tenta enviá-la. Não deixa
+      // uma leitura antiga da nuvem apagar uma alteração local que ainda não chegou.
+      const pendingBefore = readPendingOrders().some((item) => item.id === current!.id);
+      if (pendingBefore) {
+        await retryPendingOrders(current.id);
+        if (readPendingOrders().some((item) => item.id === current!.id)) return;
+      }
+
+      try {
+        const cloud = await getOrder(current.id);
+        if (!cloud?.items?.length) return;
+
+        const cloudData: Separation = {
+          id: cloud.id,
+          fileName: cloud.arquivoNome || current.fileName,
+          numero: cloud.numero || current.numero || "",
+          cliente: cloud.cliente || current.cliente || "",
+          items: cloud.items.map((item) => ({
+            id: String(item.id),
+            codigo: item.codigo || "",
+            descricao: item.descricao || "",
+            quantidade: Number(item.quantidade) || 0,
+            separado: Number(item.separado) || 0
+          })),
+          createdAt: cloud.criadoEm || current.createdAt,
+          status: cloud.status || "em_andamento"
+        };
+
+        if (!cancelled) {
+          setData(cloudData);
+          saveLocalSnapshot(cloudData);
+          setSyncError("");
+        }
+      } catch (error) {
+        if (!cancelled) setSyncError(syncErrorMessage(error));
+      }
+    }, 2000);
+
     load();
     window.addEventListener("online", onOnline);
     document.addEventListener("visibilitychange", onVisible);
@@ -343,6 +394,7 @@ export default function SeparacaoAtualPage() {
       cancelled = true;
       window.removeEventListener("online", onOnline);
       document.removeEventListener("visibilitychange", onVisible);
+      window.clearInterval(cloudRefresh);
     };
   }, []);
 
