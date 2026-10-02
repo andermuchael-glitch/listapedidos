@@ -185,7 +185,6 @@ export default function SeparacaoAtualPage() {
               queuePendingOrder(merged);
             }
 
-            await retryPendingSync(merged.id);
             try {
               const refreshed = await getOrder(merged.id);
               if (!refreshed.items || refreshed.items.length === 0) return;
