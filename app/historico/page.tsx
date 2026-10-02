@@ -7,6 +7,18 @@ import { deleteAllOrders, deleteOrder, getOrder, listOrders, saveOrder } from ".
 
 type Item = { id: string; codigo: string; descricao: string; quantidade: number; separado: number };
 type Separation = { id: string; fileName: string; numero?: string; cliente?: string; items: Item[]; createdAt: string; status?: string; finishedAt?: string; archivedAt?: string; totalUnidades?: number; totalSeparado?: number };
+const PENDING_ORDERS_KEY = "listapedidos:pedidos-pendentes-nuvem";
+
+function queuePendingOrder(entry: Separation) {
+  try {
+    const current = JSON.parse(localStorage.getItem(PENDING_ORDERS_KEY) || "[]");
+    const pending = Array.isArray(current) ? current.filter((item: Separation) => item.id !== entry.id) : [];
+    pending.push(entry);
+    localStorage.setItem(PENDING_ORDERS_KEY, JSON.stringify(pending));
+  } catch {
+    // A restauração local continua válida mesmo se a fila não puder ser gravada.
+  }
+}
 
 export default function HistoricoPage() {
   const [history, setHistory] = useState<Separation[]>([]);
@@ -184,8 +196,11 @@ export default function HistoricoPage() {
               "Backup restaurado e sincronizado com a nuvem."
             );
           } catch {
+            // Guarda cada pedido completo que não conseguiu chegar ao D1.
+            // Assim a restauração não depende de uma única tentativa de rede.
+            for (const entry of syncable) queuePendingOrder(entry);
             setMessage(
-              "Backup restaurado localmente. A sincronização com a nuvem será tentada novamente quando houver conexão."
+              "Backup restaurado localmente. A nuvem falhou nesta tentativa; os pedidos ficaram na fila para sincronização automática."
             );
           }
         }
