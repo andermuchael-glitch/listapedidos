@@ -31,11 +31,17 @@ export type ApiOrder = {
 };
 
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
-  const response = await fetch(`${API_URL}${path}`, {
+  const session =
+    typeof window !== "undefined"
+      ? localStorage.getItem("listapedidos:session-token") || ""
+      : "";
+
+  const response = await fetch(API_URL + path, {
     ...init,
     credentials: "include",
     headers: {
       "content-type": "application/json",
+      ...(session ? { "X-LP-Session": session } : {}),
       ...(init.headers || {})
     },
     cache: "no-store"
