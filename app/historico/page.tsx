@@ -9,6 +9,60 @@ type Item = { id: string; codigo: string; descricao: string; quantidade: number;
 type Separation = { id: string; fileName: string; numero?: string; cliente?: string; items: Item[]; createdAt: string; status?: string; finishedAt?: string; archivedAt?: string; totalUnidades?: number; totalSeparado?: number };
 const PENDING_ORDERS_KEY = "listapedidos:pedidos-pendentes-nuvem";
 
+function orderIdentity(entry: Pick<Separation, "numero" | "fileName">) {
+  const numero = String(entry.numero || "").trim();
+  if (numero) return `numero:${numero}`;
+  return `arquivo:${String(entry.fileName || "").trim().toLowerCase()}`;
+}
+
+function mergeHistory(entries: Separation[]) {
+  const map = new Map<string, Separation>();
+
+  for (const entry of entries) {
+    const key = orderIdentity(entry);
+    const previous = map.get(key);
+
+    if (!previous) {
+      map.set(key, entry);
+      continue;
+    }
+
+    const byId = new Map(previous.items.map((item) => [String(item.id), item]));
+    for (const item of entry.items) {
+      const old = byId.get(String(item.id));
+      if (!old) {
+        byId.set(String(item.id), item);
+      } else {
+        byId.set(String(item.id), {
+          ...old,
+          ...item,
+          quantidade: Math.max(Number(old.quantidade) || 0, Number(item.quantidade) || 0),
+          separado: Math.max(Number(old.separado) || 0, Number(item.separado) || 0)
+        });
+      }
+    }
+
+    const items = Array.from(byId.values());
+    map.set(key, {
+      ...previous,
+      ...entry,
+      id: previous.items.length > 0 ? previous.id : entry.id,
+      fileName: previous.fileName || entry.fileName,
+      numero: previous.numero || entry.numero,
+      cliente: previous.cliente || entry.cliente,
+      items,
+      status:
+        previous.status === "concluida" || entry.status === "concluida"
+          ? "concluida"
+          : entry.status || previous.status,
+      totalUnidades: items.reduce((sum, item) => sum + (Number(item.quantidade) || 0), 0),
+      totalSeparado: items.reduce((sum, item) => sum + (Number(item.separado) || 0), 0)
+    });
+  }
+
+  return Array.from(map.values());
+}
+
 function queuePendingOrder(entry: Separation) {
   try {
     const current = JSON.parse(localStorage.getItem(PENDING_ORDERS_KEY) || "[]");
@@ -28,7 +82,7 @@ export default function HistoricoPage() {
 
   useEffect(() => {
     const localHistory = JSON.parse(localStorage.getItem("listapedidos:historico") || "[]");
-    setHistory(localHistory);
+    const normalizedLocal = mergeHistory(localHistory);\n    setHistory(normalizedLocal);\n    localStorage.setItem("listapedidos:historico", JSON.stringify(normalizedLocal));
 
     const generationAtStart = restoreGeneration.current;
 
@@ -128,7 +182,7 @@ export default function HistoricoPage() {
         // Invalida qualquer consulta de nuvem iniciada antes da restauração.
         restoreGeneration.current += 1;
 
-        const restoredHistory = payload.history as Separation[];
+        const restoredHistory = mergeHistory(payload.history as Separation[]);
         const restoredCurrent = payload.current as Separation | null;
 
         if (restoredCurrent) {
