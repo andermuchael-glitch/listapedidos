@@ -149,27 +149,43 @@ export default function SeparacaoAtualPage() {
               (localData.items || []).map((item) => [String(item.id), item])
             );
 
+            const cloudItems = Array.isArray(cloud.items) ? cloud.items : [];
+            const cloudById = new Map(
+              cloudItems.map((item) => [String(item.id), item])
+            );
+
+            // Mantém também itens que existem no dispositivo e ainda não chegaram
+            // ao D1. A nuvem nunca pode transformar um pedido válido em 0 itens.
+            const itemIds = new Set([
+              ...(localData.items || []).map((item) => String(item.id)),
+              ...cloudItems.map((item) => String(item.id))
+            ]);
+
+            const mergedItems = Array.from(itemIds).map((itemId) => {
+              const item = cloudById.get(itemId);
+              const local = localById.get(itemId);
+
+              return {
+                id: itemId,
+                codigo: item?.codigo || local?.codigo || "",
+                descricao: item?.descricao || local?.descricao || "",
+                quantidade:
+                  Number(item?.quantidade) ||
+                  Number(local?.quantidade) ||
+                  0,
+                separado: Math.max(
+                  Number(item?.separado) || 0,
+                  Number(local?.separado) || 0
+                )
+              };
+            });
+
             const merged: Separation = {
               id: cloud.id,
               fileName: cloud.arquivoNome || localData.fileName,
               numero: cloud.numero || localData.numero || "",
               cliente: cloud.cliente || localData.cliente || "",
-              items: (cloud.items || []).map((item) => {
-                const local = localById.get(String(item.id));
-                return {
-                  id: String(item.id),
-                  codigo: item.codigo || local?.codigo || "",
-                  descricao: item.descricao || local?.descricao || "",
-                  quantidade:
-                    Number(item.quantidade) ||
-                    Number(local?.quantidade) ||
-                    0,
-                  separado: Math.max(
-                    Number(item.separado) || 0,
-                    Number(local?.separado) || 0
-                  )
-                };
-              }),
+              items: mergedItems,
               createdAt: cloud.criadoEm || localData.createdAt,
               status:
                 cloud.status === "concluida" || localData.status === "concluida"
