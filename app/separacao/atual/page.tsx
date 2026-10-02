@@ -94,8 +94,9 @@ function syncFullOrder(order: Separation): Promise<boolean> {
         removePendingOrder(order.id, snapshot);
         return true;
       } catch (error) {
-        // A cópia permanece na fila. Uma alteração mais nova para o mesmo
-        // pedido nunca será apagada por uma resposta antiga.
+        // A cópia permanece na fila. Nunca substituímos o estado local por
+        // uma resposta antiga da nuvem quando a gravação falha.
+        setTimeout(() => setSyncError(syncErrorMessage(error)), 0);
         return false;
       }
     });
@@ -220,8 +221,14 @@ export default function SeparacaoAtualPage() {
               });
               removePendingOrder(merged.id);
               setSyncError("");
-            } catch {
+            } catch (error) {
               queuePendingOrder(merged);
+              if (!cancelled) setSyncError(syncErrorMessage(error));
+              // MUITO IMPORTANTE: se a gravação falhou, não fazemos uma nova
+              // leitura da nuvem para depois substituir o estado local por uma
+              // versão antiga. O estado local continua sendo a fonte de verdade
+              // até a próxima sincronização bem-sucedida.
+              return;
             }
 
             try {
