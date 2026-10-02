@@ -160,6 +160,25 @@ export default function SeparacaoAtualPage() {
             };
             setData(merged);
             localStorage.setItem("listapedidos:separacao-atual", JSON.stringify(merged));
+
+            // Reenvia a separação COMPLETA depois de carregar. Isso recupera
+            // automaticamente casos em que a última alteração foi salva localmente
+            // mas o PATCH/Finalizar falhou com "Failed to fetch".
+            try {
+              await saveOrder({
+                id: merged.id,
+                numero: merged.numero,
+                cliente: merged.cliente,
+                arquivoNome: merged.fileName,
+                status: merged.status || "em_andamento",
+                items: merged.items
+              });
+              removePendingOrder(merged.id);
+              setSyncError("");
+            } catch {
+              queuePendingOrder(merged);
+            }
+
             await retryPendingSync(merged.id);
             try {
               const refreshed = await getOrder(merged.id);
