@@ -3,49 +3,13 @@
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { ArrowLeft, Check, Minus, Plus, Search } from "lucide-react";
-import { getOrder, listOrders, saveOrder, updateItemSeparated } from "../../../lib/api";
+import { getOrder, listOrders, saveOrder } from "../../../lib/api";
 
 type Item = { id: string; codigo: string; descricao: string; quantidade: number; separado: number };
 type Separation = { id: string; fileName: string; numero: string; cliente: string; items: Item[]; createdAt: string; status?: string; finishedAt?: string };
-type PendingSync = { orderId: string; itemId: string; separado: number };
 type PendingOrder = Separation;
-const PENDING_SYNC_KEY = "listapedidos:sync-pendente";
 const PENDING_ORDERS_KEY = "listapedidos:pedidos-pendentes-nuvem";
-
-function orderIdentity(entry: Pick<Separation, "id" | "numero" | "fileName">) {
-  const numero = String(entry.numero || "").trim();
-  if (numero) return `numero:${numero}`;
-  return `arquivo:${String(entry.fileName || "").trim().toLowerCase()}`;
-}
-
-function readPendingSync(): PendingSync[] {
-  try {
-    const value = JSON.parse(localStorage.getItem(PENDING_SYNC_KEY) || "[]");
-    return Array.isArray(value) ? value : [];
-  } catch {
-    return [];
-  }
-}
-
-function writePendingSync(value: PendingSync[]) {
-  localStorage.setItem(PENDING_SYNC_KEY, JSON.stringify(value));
-}
-
-function queuePendingSync(entry: PendingSync) {
-  const pending = readPendingSync().filter(
-    (item) => !(item.orderId === entry.orderId && item.itemId === entry.itemId)
-  );
-  pending.push(entry);
-  writePendingSync(pending);
-}
-
-function removePendingSync(orderId: string, itemId: string) {
-  writePendingSync(
-    readPendingSync().filter(
-      (item) => !(item.orderId === orderId && item.itemId === itemId)
-    )
-  );
-}
+const syncChains = new Map<string, Promise<boolean>>();
 
 function readPendingOrders(): PendingOrder[] {
   try {
@@ -57,10 +21,9 @@ function readPendingOrders(): PendingOrder[] {
 }
 
 function queuePendingOrder(order: PendingOrder) {
-  const key = orderIdentity(order);
-  const pending = readPendingOrders().filter((item) => orderIdentity(item) !== key);
+  const pending = readPendingOrders().filter((item) => item.id !== order.id);
   pending.push(order);
-  localStorage.setItem(PENDING_ORDERS_KEY, JSON.stringify(pending));
+  localStorage.setItem(PENDING_ORDERS_KEY, JSON.stringify(pending.slice(-100)));
 }
 
 function removePendingOrder(orderId: string, expectedSerialized?: string) {
@@ -71,44 +34,45 @@ function removePendingOrder(orderId: string, expectedSerialized?: string) {
   localStorage.setItem(PENDING_ORDERS_KEY, JSON.stringify(next));
 }
 
-async function syncFullOrder(order: Separation) {
-  const snapshot = JSON.stringify(order);
+function syncFullOrder(order: Separation): Promise<boolean> {
   queuePendingOrder(order);
 
-  try {
-    await saveOrder({
-      id: order.id,
-      numero: order.numero,
-      cliente: order.cliente,
-      arquivoNome: order.fileName,
-      status: order.status || "em_andamento",
-      items: order.items
+  const previous = syncChains.get(order.id) || Promise.resolve(true);
+  const current = previous
+    .catch(() => false)
+    .then(async () => {
+      const snapshot = JSON.stringify(order);
+      try {
+        await saveOrder({
+          id: order.id,
+          numero: order.numero,
+          cliente: order.cliente,
+          arquivoNome: order.fileName,
+          status: order.status || "em_andamento",
+          items: order.items
+        });
+        removePendingOrder(order.id, snapshot);
+        return true;
+      } catch {
+        // A cópia permanece na fila. Uma alteração mais nova para o mesmo
+        // pedido nunca será apagada por uma resposta antiga.
+        return false;
+      }
     });
-    // Só remove se ninguém tiver alterado o pedido enquanto a requisição estava
-    // em andamento. Assim uma resposta antiga nunca apaga uma alteração nova.
-    removePendingOrder(order.id, snapshot);
-    return true;
-  } catch {
-    return false;
-  }
+
+  syncChains.set(order.id, current);
+  current.finally(() => {
+    if (syncChains.get(order.id) === current) {
+      syncChains.delete(order.id);
+    }
+  });
+  return current;
 }
 
 async function retryPendingOrders(orderId?: string) {
   const pending = readPendingOrders().filter((item) => !orderId || item.id === orderId);
   for (const order of pending) {
     await syncFullOrder(order);
-  }
-}
-
-async function retryPendingSync(orderId: string) {
-  const pending = readPendingSync().filter((item) => item.orderId === orderId);
-  for (const item of pending) {
-    try {
-      await updateItemSeparated(item.orderId, item.itemId, item.separado);
-      removePendingSync(item.orderId, item.itemId);
-    } catch {
-      // Continua tentando os demais itens. Os que falharem permanecem na fila.
-    }
   }
 }
 
@@ -141,7 +105,15 @@ export default function SeparacaoAtualPage() {
             // Se a nuvem ainda não possui os itens, o backup/local é a fonte
             // de verdade. Nunca transformamos uma separação válida em 0/0.
             if ((!cloud.items || cloud.items.length === 0) && (localData.items || []).length > 0) {
+              // A nuvem pode estar apenas com o cabeçalho do pedido. Nesse caso
+              // o celular continua sendo a fonte de verdade e REENVIA o pedido
+              // completo para reconstruir os itens no D1.
               setData(localData);
+              syncFullOrder(localData).then((ok) => {
+                if (!cancelled) {
+                  setSyncError(ok ? "" : "Não foi possível sincronizar agora.");
+                }
+              });
               return;
             }
 
@@ -293,15 +265,39 @@ export default function SeparacaoAtualPage() {
           return;
         }
       } catch {
-        // Sem internet/login, usamos o cache local.
+        // Sem internet/login: preserva o pedido no dispositivo e deixa uma
+        // cópia completa na fila para o próximo retorno da conexão.
+        if (localData?.id) queuePendingOrder(localData);
       }
 
       if (!cancelled && localData) setData(localData);
     }
 
+    const retry = () => {
+      try {
+        const raw = localStorage.getItem("listapedidos:separacao-atual");
+        const current = raw ? JSON.parse(raw) as Separation : null;
+        if (current?.id) {
+          retryPendingOrders(current.id).then(() => {
+            if (!cancelled) setSyncError("");
+          });
+        }
+      } catch {}
+    };
+
+    const onOnline = () => retry();
+    const onVisible = () => {
+      if (document.visibilityState === "visible") retry();
+    };
+
     load();
+    window.addEventListener("online", onOnline);
+    document.addEventListener("visibilitychange", onVisible);
+
     return () => {
       cancelled = true;
+      window.removeEventListener("online", onOnline);
+      document.removeEventListener("visibilitychange", onVisible);
     };
   }, []);
 
@@ -356,19 +352,6 @@ export default function SeparacaoAtualPage() {
     }
   }
 
-  function syncItem(id: string, separado: number) {
-    if (!data) return;
-    updateItemSeparated(data.id, id, separado)
-      .then(() => {
-        removePendingSync(data.id, id);
-        setSyncError("");
-      })
-      .catch((error) => {
-        queuePendingSync({ orderId: data.id, itemId: id, separado });
-        setSyncError(error instanceof Error ? error.message : "Não foi possível sincronizar com a nuvem.");
-      });
-  }
-
   function changeQuantity(id: string, delta: number) {
     if (!data) return;
     const current = data.items.find((item) => item.id === id);
@@ -381,13 +364,12 @@ export default function SeparacaoAtualPage() {
     const nextData = { ...data, items };
     save(nextData);
 
-    // O pedido inteiro entra na fila a cada alteração. O PATCH individual
-    // continua como compatibilidade, mas nunca é a única forma de sincronizar.
+    // Uma única fila por pedido garante que duas alterações rápidas no celular
+    // nunca sejam gravadas fora de ordem no D1.
     syncFullOrder(nextData).then((ok) => {
       if (ok) setSyncError("");
       else setSyncError("Não foi possível sincronizar agora.");
     });
-    syncItem(id, nextValue);
   }
 
   function setQuantity(id: string, value: string) {
@@ -405,13 +387,11 @@ export default function SeparacaoAtualPage() {
     const nextData = { ...data, items };
     save(nextData);
 
-    // O pedido inteiro entra na fila a cada alteração. O PATCH individual
-    // continua como compatibilidade, mas nunca é a única forma de sincronizar.
+    // A mesma fila serializada é usada para a edição digitada.
     syncFullOrder(nextData).then((ok) => {
       if (ok) setSyncError("");
       else setSyncError("Não foi possível sincronizar agora.");
     });
-    syncItem(id, nextValue);
   }
 
   const visibleItems = useMemo(() => {
