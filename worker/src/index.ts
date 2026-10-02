@@ -38,7 +38,7 @@ function response(
     "content-type": "application/json; charset=UTF-8",
     "access-control-allow-origin": corsOrigin(request, env),
     "access-control-allow-credentials": "true",
-    "access-control-allow-headers": "content-type",
+    "access-control-allow-headers": "content-type, x-lp-session",
     "access-control-allow-methods": "GET,POST,PATCH,DELETE,OPTIONS",
     "cache-control": "no-store",
     "vary": "Origin"
@@ -118,7 +118,7 @@ function token() {
 }
 
 async function userId(request: Request, env: Env) {
-  const raw = cookie(request, "lp_session");
+  const raw = request.headers.get("X-LP-Session") || cookie(request, "lp_session");
   if (!raw) return null;
 
   const tokenHash = await hash(raw);
@@ -394,6 +394,7 @@ export default {
           env,
           {
             ok: true,
+            sessionToken: rawToken,
             user: {
               id,
               nome: String(body.nome || ""),
@@ -441,6 +442,7 @@ export default {
           env,
           {
             ok: true,
+            sessionToken: rawToken,
             user: {
               id: user.id,
               nome: user.nome,
