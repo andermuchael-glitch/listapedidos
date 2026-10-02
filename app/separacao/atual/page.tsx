@@ -360,25 +360,84 @@ export default function SeparacaoAtualPage() {
         const cloud = await getOrder(current.id);
         if (!cloud?.items?.length) return;
 
-        const cloudData: Separation = {
+        const localItems = Array.isArray(current.items) ? current.items : [];
+        const cloudItems = Array.isArray(cloud.items) ? cloud.items : [];
+        const localById = new Map(localItems.map((item) => [String(item.id), item]));
+        const cloudById = new Map(cloudItems.map((item) => [String(item.id), item]));
+
+        // Nunca substitui uma cópia local mais completa por uma leitura antiga
+        // ou parcial do D1. Isso é importante quando celular e computador estão
+        // abertos ao mesmo tempo.
+        const ids = new Set([
+          ...localItems.map((item) => String(item.id)),
+          ...cloudItems.map((item) => String(item.id))
+        ]);
+
+        const mergedItems = Array.from(ids).map((id) => {
+          const local = localById.get(id);
+          const cloudItem = cloudById.get(id);
+
+          return {
+            id,
+            codigo: cloudItem?.codigo || local?.codigo || "",
+            descricao: cloudItem?.descricao || local?.descricao || "",
+            quantidade: Math.max(
+              Number(cloudItem?.quantidade) || 0,
+              Number(local?.quantidade) || 0
+            ),
+            separado: Math.max(
+              Number(cloudItem?.separado) || 0,
+              Number(local?.separado) || 0
+            )
+          };
+        });
+
+        const localTotal = localItems.reduce(
+          (sum, item) => sum + (Number(item.quantidade) || 0),
+          0
+        );
+        const cloudTotal = cloudItems.reduce(
+          (sum, item) => sum + (Number(item.quantidade) || 0),
+          0
+        );
+        const localSeparated = localItems.reduce(
+          (sum, item) => sum + (Number(item.separado) || 0),
+          0
+        );
+        const cloudSeparated = cloudItems.reduce(
+          (sum, item) => sum + (Number(item.separado) || 0),
+          0
+        );
+
+        const merged: Separation = {
           id: cloud.id,
           fileName: cloud.arquivoNome || current.fileName,
           numero: cloud.numero || current.numero || "",
           cliente: cloud.cliente || current.cliente || "",
-          items: cloud.items.map((item) => ({
-            id: String(item.id),
-            codigo: item.codigo || "",
-            descricao: item.descricao || "",
-            quantidade: Number(item.quantidade) || 0,
-            separado: Number(item.separado) || 0
-          })),
+          items: mergedItems,
           createdAt: cloud.criadoEm || current.createdAt,
-          status: cloud.status || "em_andamento"
+          status:
+            local.status === "concluida" || cloud.status === "concluida"
+              ? "concluida"
+              : cloud.status || local.status || "em_andamento"
         };
 
+        // Se o dispositivo possui dados mais recentes/completos, reenviamos
+        // a mesclagem ao D1. Se o D1 estiver à frente, apenas atualizamos a tela.
+        const localIsAhead =
+          localItems.length > cloudItems.length ||
+          localTotal > cloudTotal ||
+          localSeparated > cloudSeparated;
+
+        if (localIsAhead) {
+          await syncFullOrder(merged, (error) => {
+            if (!cancelled) setSyncError(syncErrorMessage(error));
+          });
+        }
+
         if (!cancelled) {
-          setData(cloudData);
-          saveLocalSnapshot(cloudData);
+          setData(merged);
+          saveLocalSnapshot(merged);
           setSyncError("");
         }
       } catch (error) {
