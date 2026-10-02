@@ -352,6 +352,7 @@ function locateLaunchProductTable(matrix: SheetMatrix) {
 
 
 const PARSER_VERSION = "2026-10-01-3";
+const LOCAL_SNAPSHOT_KEY = "listapedidos:separacao-seguranca";
 
 function validateImportedRows(rows: SheetMatrix) {
   if (!rows.length) {
@@ -750,10 +751,9 @@ export default function NovaSeparacaoPage() {
       }
     }
 
-    localStorage.setItem(
-      "listapedidos:separacao-atual",
-      JSON.stringify(separation)
-    );
+    const separationSerialized = JSON.stringify(separation);
+    localStorage.setItem("listapedidos:separacao-atual", separationSerialized);
+    localStorage.setItem(LOCAL_SNAPSHOT_KEY, separationSerialized);
 
     window.location.href = "/listapedidos/separacao/atual/";
   }
