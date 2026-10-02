@@ -9,6 +9,7 @@ type Item = { id: string; codigo: string; descricao: string; quantidade: number;
 type Separation = { id: string; fileName: string; numero: string; cliente: string; items: Item[]; createdAt: string; status?: string; finishedAt?: string };
 type PendingOrder = Separation;
 const PENDING_ORDERS_KEY = "listapedidos:pedidos-pendentes-nuvem";
+const LOCAL_SNAPSHOT_KEY = "listapedidos:separacao-seguranca";
 const syncChains = new Map<string, Promise<boolean>>();
 
 function syncErrorMessage(error: unknown) {
@@ -24,6 +25,30 @@ function syncErrorMessage(error: unknown) {
 
 function orderIdentity(order: Separation) {
   return String(order.id || `${order.numero || ""}|${order.fileName || ""}`);
+}
+
+function saveLocalSnapshot(order: Separation) {
+  const serialized = JSON.stringify(order);
+  localStorage.setItem("listapedidos:separacao-atual", serialized);
+  localStorage.setItem(LOCAL_SNAPSHOT_KEY, serialized);
+}
+
+function readLocalSnapshot(): Separation | null {
+  const candidates = [
+    localStorage.getItem("listapedidos:separacao-atual"),
+    localStorage.getItem(LOCAL_SNAPSHOT_KEY)
+  ].filter(Boolean) as string[];
+  const parsed = candidates.map((raw) => {
+    try { return JSON.parse(raw) as Separation; } catch { return null; }
+  }).filter(Boolean) as Separation[];
+  if (!parsed.length) return null;
+  return parsed.sort((a, b) => {
+    const aUnits = (a.items || []).reduce((s, i) => s + Number(i.quantidade || 0), 0);
+    const bUnits = (b.items || []).reduce((s, i) => s + Number(i.quantidade || 0), 0);
+    const aSep = (a.items || []).reduce((s, i) => s + Number(i.separado || 0), 0);
+    const bSep = (b.items || []).reduce((s, i) => s + Number(i.separado || 0), 0);
+    return (bUnits - aUnits) || (bSep - aSep);
+  })[0];
 }
 
 function readPendingOrders(): PendingOrder[] {
@@ -104,8 +129,7 @@ export default function SeparacaoAtualPage() {
       let localData: Separation | null = null;
 
       try {
-        const raw = localStorage.getItem("listapedidos:separacao-atual");
-        if (raw) localData = JSON.parse(raw);
+        localData = readLocalSnapshot();
       } catch {
         localData = null;
       }
@@ -180,7 +204,7 @@ export default function SeparacaoAtualPage() {
                   : cloud.status || localData.status
             };
             setData(merged);
-            localStorage.setItem("listapedidos:separacao-atual", JSON.stringify(merged));
+            saveLocalSnapshot(merged);
 
             // Reenvia a separação COMPLETA depois de carregar. Isso recupera
             // automaticamente casos em que a última alteração foi salva localmente
@@ -244,7 +268,7 @@ export default function SeparacaoAtualPage() {
               };
               if (!cancelled) {
                 setData(synced);
-                localStorage.setItem("listapedidos:separacao-atual", JSON.stringify(synced));
+                saveLocalSnapshot(synced);
               }
             } catch {
               // A primeira leitura já é válida; mantém o estado local/cloud disponível.
@@ -274,7 +298,7 @@ export default function SeparacaoAtualPage() {
               status: cloud.status
             };
             setData(fresh);
-            localStorage.setItem("listapedidos:separacao-atual", JSON.stringify(fresh));
+            saveLocalSnapshot(fresh);
           }
           return;
         }
@@ -328,7 +352,7 @@ export default function SeparacaoAtualPage() {
     };
 
     setData(normalized);
-    localStorage.setItem("listapedidos:separacao-atual", JSON.stringify(normalized));
+    saveLocalSnapshot(normalized);
 
     // O pedido passa automaticamente para o histórico assim que chega a 100%.
     // Se ainda estiver em andamento, apenas atualiza uma cópia que já exista no histórico.
