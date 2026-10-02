@@ -89,9 +89,7 @@ export default function HistoricoPage() {
     const generationAtStart = restoreGeneration.current;
 
     listOrders()
-      .then((orders) => {
-        // Se um backup foi restaurado enquanto a consulta estava em andamento,
-        // não deixe a resposta antiga da nuvem sobrescrever o backup recém-restaurado.
+      .then(async (orders) => {
         if (restoreGeneration.current !== generationAtStart) return;
 
         const currentLocal = JSON.parse(
@@ -102,44 +100,85 @@ export default function HistoricoPage() {
           currentLocal.map((entry) => [entry.id, entry])
         );
 
-        const cloudHistory: Separation[] = orders.map((order) => {
-          const local = localMap.get(order.id);
+        // A lista /pedidos traz o resumo. Para não perder os produtos ao
+        // atualizar o celular, buscamos também a versão completa de cada pedido.
+        const fullOrders = await Promise.all(
+          orders.map(async (order) => {
+            try {
+              return await getOrder(order.id);
+            } catch {
+              return null;
+            }
+          })
+        );
 
-          // A cópia local é a fonte de verdade durante a restauração/backup.
-          // A lista da nuvem pode ter apenas o resumo e, em uma sincronização
-          // incompleta, retornar totalSeparado=0 mesmo que o backup tenha 100%.
+        const cloudHistory: Separation[] = orders.map((order, index) => {
+          const local = localMap.get(order.id);
+          const full = fullOrders[index];
+          const cloudItems = Array.isArray(full?.items) ? full.items : [];
+          const localItems = Array.isArray(local?.items) ? local.items : [];
+          const localById = new Map(
+            localItems.map((item) => [String(item.id), item])
+          );
+
+          const items = cloudItems.length
+            ? cloudItems.map((item) => {
+                const localItem = localById.get(String(item.id));
+                return {
+                  id: String(item.id),
+                  codigo: item.codigo || localItem?.codigo || "",
+                  descricao: item.descricao || localItem?.descricao || "",
+                  quantidade:
+                    Number(item.quantidade) ||
+                    Number(localItem?.quantidade) ||
+                    0,
+                  separado: Math.max(
+                    Number(item.separado) || 0,
+                    Number(localItem?.separado) || 0
+                  )
+                };
+              })
+            : localItems;
+
           return {
             id: order.id,
-            fileName: local?.fileName || order.arquivoNome,
-            numero: local?.numero || order.numero || "",
-            cliente: local?.cliente || order.cliente || "",
-            items: local?.items || [],
+            fileName: local?.fileName || full?.arquivoNome || order.arquivoNome,
+            numero: local?.numero || full?.numero || order.numero || "",
+            cliente: local?.cliente || full?.cliente || order.cliente || "",
+            items,
             createdAt:
               local?.createdAt ||
+              full?.criadoEm ||
               order.criadoEm ||
               new Date().toISOString(),
-            status: local?.status || order.status,
+            status:
+              local?.status ||
+              full?.status ||
+              order.status,
             totalUnidades:
-              local?.totalUnidades ??
-              order.totalUnidades,
+              items.length
+                ? items.reduce((sum, item) => sum + (Number(item.quantidade) || 0), 0)
+                : local?.totalUnidades ?? order.totalUnidades,
             totalSeparado:
-              local?.totalSeparado ??
-              order.totalSeparado ??
-              0
+              items.length
+                ? items.reduce((sum, item) => sum + (Number(item.separado) || 0), 0)
+                : local?.totalSeparado ?? order.totalSeparado ?? 0
           };
         });
 
-        // Mantém pedidos restaurados que ainda não existem na nuvem.
+        if (restoreGeneration.current !== generationAtStart) return;
+
         for (const local of currentLocal) {
           if (!cloudHistory.some((entry) => entry.id === local.id)) {
             cloudHistory.push(local);
           }
         }
 
-        setHistory(cloudHistory);
+        const mergedHistory = mergeHistory(cloudHistory);
+        setHistory(mergedHistory);
         localStorage.setItem(
           "listapedidos:historico",
-          JSON.stringify(cloudHistory)
+          JSON.stringify(mergedHistory)
         );
       })
       .catch(() => {
